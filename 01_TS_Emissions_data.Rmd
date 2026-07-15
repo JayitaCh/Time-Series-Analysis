@@ -1,0 +1,213 @@
+---
+title: "Exploring Time Series Data"
+author: "Jayita Chakraborty (PhD)"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Libraries
+
+```{r, warning=FALSE}
+require(tidyverse)
+require(readr)
+require(purrr)
+```
+
+## Load Data
+
+```{r, message=FALSE}
+df <- read_csv("../Environment_Emissions_by_Sector_E_All_Data_(Normalized).csv")
+```
+
+## Know Your Data
+While working with your time-series data, it is important to understand the variables and their corresponding values present in the data. It will help you to analyse the elements specific to your objectives. You may also re articulate your objectives based on the data you have acquired.
+- Investigate whether your data is **structured/semi-structured/unstructured** data
+  - **Structured** - csv, excel data
+  - **Semi-structured** - JSON, XML
+  - **Unstructured** - texts, audio, image
+- Know the shape of your data,
+    - How many observations do your dataset have?
+    - How many variables are there in your dataset?
+- Investigate each variable
+    - Variable Type
+    - QV : Descriptive Statistics, Histogram, Fit Distribution (if reqd.)
+    - CV : Number of categories, Count per category, Bar Chart
+    - Time Var: Time can be recorded in various formats; You need to identify the time variables in your data
+    - Is there any missing data?
+- Do you need additional data for further investigation?
+- How do you join additional information to your main dataset?
+
+The dataset we have is a **structured** data. We are really fortunate in that aspect as such dataset is quite easy to handle. Let's first look at the dimension/shape of the dataset:
+
+```{r}
+# Number of observations
+print(paste0("Number of observations in the data are ",nrow(df)))
+
+# Number of variables 
+print(paste0("Number of variables in the data are ",ncol(df)))
+
+# Checking both together
+print(paste0("There are ",dim(df)[1]," observations and ",dim(df)[2]," variables in the data."))
+
+```
+
+Now, let's go to the second step:
+```{r}
+df$Area
+```
+
+```{r}
+# We have around 9 different data types/classes in R. Among these classes 6 are one-dimensional classes, which are, numeric, character, integer, factor, logical and Date/POSIXct. The rest of the classes are more complex classes which are lists, data.frame/tibble and matrix. The simplest way to learn about the data type of a variable is to use the `class` function
+print(class(df$`Area Code`))
+
+# Now you can extract the data types of all the variables at once my applying the class function on all the variables
+print("The data types for all the variables are as follows:")
+print(sapply(df,'class'))
+
+# The data type and the storage of the variable can actually be different. You can distinguish this based on the `typeof` function.
+print("The storage mode of each variable in the data are as follows:")
+print(sapply(df,'typeof'))
+
+# From this function, we get some more information about the numeric variable. So, all the QVs are stored as double, which implies that the variables support information on decimal places.
+
+# But, we are unable to extract any info on the values of these variables.
+# If you want to extract the levels of your factors and the first few values of each variable, you need to use the function str()
+print("Displaying the internal structure of the dataframe")
+print(str(df))
+
+```
+
+We have a bit of information on our variable types. It seems there are quite a few numbers of CVs in the dataset. But we do not know their levels or categories. In this section, let's work out the categories in each variable.
+
+```{r}
+# Based on our previous outputs, we can observe that there are five variables which are associated with characters/texts.
+char_var <- c("Area","Element","Item","Unit","Flag")
+
+print(sapply(df[, char_var], function(x) levels(factor(x))))
+
+```
+
+
+```{r}
+df <- df %>%
+  mutate(
+  Area = iconv(Area,from = "latin1", to = "UTF-8", sub=""),
+  Area = trimws(Area)
+  )
+areas <- sapply(df[, "Area"], function(x) levels(factor(x)))
+```
+
+Once you investigate the Area column, you will observe that contains not only countries but also **regions** (e.g., Africa, Western Europe), **groups** (e.g., OECD, Annex I countries), and **historical entities** (e.g., USSR, Yugoslav SFR).
+
+You can obviously identify the countries manually. However, to improve our efficiency, we will use API service of OpenAI (you are free to use any available API service of any LLM platform). We will provide a prompt to the OpenAI API servers and ask it to return the response in a JSON format. In this regard, we will require two libraries [`ellmer`](https://ellmer.tidyverse.org/index.html) and [`jsonlite`](https://jeroen.r-universe.dev/jsonlite/doc/manual.html)
+
+```{r classify-areas}
+require(ellmer)
+require(jsonlite)
+
+# initiate the LLM you would like to use. Here, we are using OpenAI.
+chat <- chat_openai(model = "gpt-4.1")
+
+prompt <- paste0(
+"You are an expert in political geography and historical geography.
+
+Classify each area name into exactly one category:
+
+1. country: 
+  - A current sovereign country/state.
+  - A self-governing territory or autonomous area with substantial political identity.
+  - An overseas territory, dependent territory, or externally governed territory that is commonly treated as a separate geographic entity.
+2. historical_country:
+  - A former sovereign country, state, empire, kingdom, republic, or political entity that no longer exists.
+3. region:
+  - A geographic area that is not a country or territory.
+  - Includes continents, UN-defined regions and subregions, historical regions, cultural regions, and other non-sovereign geographic areas.
+4. other: 
+  - Any entry that does not fit the above categories.
+
+Return ONLY valid JSON.
+
+Format:
+[
+ {\"name\":\"...\", \"category\":\"...\"}
+]
+
+Area names:
+
+",
+paste(areas, collapse="\n")
+)
+
+response <- chat$chat(prompt)
+
+classification <- fromJSON(response)
+
+classification
+```
+
+
+```{r}
+
+# First store the historical countries.
+historical <- classification %>%
+  filter(category == "historical_country") %>%
+  select(name)
+  
+regions <- classification %>%
+  filter(category == "region") %>%
+  select(name)
+
+others <- classification %>%
+  filter(category == "other") %>%
+  select(name)
+
+# Now filter your data to specifically contain only countries
+df_countries <- df %>%
+  filter(!(Area %in% c(historical$name,regions$name)))
+```
+
+
+```{r}
+# Let's create a list of contingengy tables for the CVs
+df_countries[char_var] %>%
+  imap_dfr(~{
+    tab <- table(.x)
+    data.frame(
+      variable=.y,
+      value = names(tab),
+      count = as.vector(tab),
+      percent = round(100*as.vector(tab)/sum(tab),1)
+    )
+  })
+```
+```{r}
+chk<- df_countries %>%
+  filter(Element == "Emissions per capita")
+
+levels(factor(chk$Year))
+levels(factor(chk$`Year Code`))
+```
+
+
+Let's look at the time variable now. In our case, the time variable is `Year`.
+```{r}
+df_countries %>%
+  group_by(Year, Element) %>%
+  mutate(freq = n()) %>%
+  ggplot(aes(x=factor(Year),y = freq, colour = Element,group = Element)) +
+  geom_line(size=2) +
+  geom_point(size=3) +
+  labs(
+    x = "Year",
+    y = "Number of observations",
+    title = "Observations by Year"
+  ) +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle=90,hjust = 0.5,vjust=0.5)
+  )
+```

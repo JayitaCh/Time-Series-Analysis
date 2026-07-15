@@ -1,0 +1,26 @@
+---
+title: "Prompt_Extraction"
+author: "Jayita Chakraborty"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# install.packages("ellmer")
+require(ellmer)
+```
+
+```{r}
+chat <- chat_openai(model = "gpt-4.1")
+. <- chat$chat("Who created R?", echo = FALSE)
+chat
+```
+
+```{r}
+
+```
+
