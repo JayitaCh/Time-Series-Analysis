@@ -4,6 +4,8 @@
 .Ruserdata
 .txt
 .html
+.log
+.webp
 App_1_Prompt_Extraction.Rmd
 Emissions_data.R
 TS_Demo.R
