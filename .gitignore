@@ -2,7 +2,10 @@
 .Rhistory
 .RData
 .Ruserdata
+.txt
+.html
 App_1_Prompt_Extraction.Rmd
 Emissions_data.R
 TS_Demo.R
 Image_1.PNG
+Image_2.PNG

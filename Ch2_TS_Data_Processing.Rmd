@@ -1,12 +1,20 @@
 ---
 title: "Datetime operations, indexing, and slicing"
-author: "Jayita Chakraborty"
-date: "`r Sys.Date()`"
-output: html_document
+author: "Jayita Chakraborty (PhD)"
+date: ""
+output: 
+  pdf_document:
+    latex_engine: xelatex
+geometry: "left=2cm,right=2cm,top=2cm,bottom=2cm"
+header-includes:
+  - \usepackage{xeCJK}
+  - \usepackage{booktabs}
+colorlinks: true
+urlcolor: blue
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE,tidy.opts = list(width.cutoff = 60), tidy = TRUE)
 ```
 
 ## Date and time objects in R
@@ -34,36 +42,42 @@ By default, the `Sys.time` function returns an object of the `POSIXct`, `POSIXt`
 
 ```{r}
 time_lt <- as.POSIXlt(time_ct)
+
 class(time_lt)
 
-unclass(time_ct) ;unclass(time_lt)
+unclass(time_ct)
+unclass(time_lt)
 ```
 
 ## Creating date and time objects
-We can convert the "2014-5-12" string into a Date object using the
-`as.Date` function. This is feasible due to the intrinsic characteristics of R that can assign values to a specific class or object, which is usually the
+We can convert the "2014-5-12" string into a Date object using the `as.Date` function. This is feasible due to the intrinsic characteristics of R that can assign values to a specific class or object, which is usually the
 combination of `as.[the class name]`.
 
 ```{r}
 date <- as.Date("2014-5-12")
 time_ct <- as.POSIXct("2014-5-12 20:05:35", tz = "EST")
 
-date;time_ct
+date_time_ct <- as.Date("2014-5-12 20:05:35")
 
-class(date);class(time_ct)
+date;time_ct;date_time_ct
+
+class(date);class(time_ct);class(date_time_ct)
 ```
 If the format of the input object is different from the **ISO 8601** standard, using the `as.Date` function without declaring the object format structure would return incorrect results. For example, let's try to convert the 31-01-2018 date to Date format without reformatting it.
 ```{r}
-as.Date("31-01-2018")
+as.Date("31/01/2018")
 ```
 
 In order to solve this issue, you will need to map the different components of the input object to the structure of the Date object. 
 ```{r}
-as.Date("31-01-2018", format = "%d-%m-%Y")
+as.Date("31/01/2018", format = "%d/%m/%Y")
 ```
-The following table provides a summary of the main arguments for
+The following figure \ref{fig1} provides a summary of the main arguments for
 date objects. You can also checkout this [documentation](https://www.rdocumentation.org/packages/base/versions/3.6.0/topics/strptime) for your reference.
-![](Image_1.png)
+
+
+![Symbols used for formatting date. \label{fig1}](Image_1.png){width=80%}
+
 Date objects are stored internally in R as numeric values that represent the number of days from the origin point. You can easily retrieve the numeric value of the object by using the `as.numeric` function.
 ```{r}
 as.numeric(as.Date("31-01-2018", format = "%d-%m-%Y"))
@@ -80,8 +94,7 @@ dates_excel_origin_added <- as.Date(dates_excel,origin = as.Date("1899-12-30"))
 
 dates_excel_no_origin ; dates_excel_origin_added
 ```
-The following table provides some examples for the origin point of commonly used
-software:
+The following table \ref{tab1} provides some examples for the origin point of commonly used software:
 
 |Software|Origin Date|
 |:--------:|:-----------:|
@@ -91,8 +104,10 @@ software:
 |SAS|1/1/1960|
 |Stata|1/1/1960|
 
+Table: Origin dates used by common software packages.\label{tab1}
+
 Now, let's work with some examples to conduct datetime manipulations in the real world data. First we will load some packages which will be useful.
-```{r, message=FALSE}
+```{r, message=FALSE,warning=FALSE}
 require(tidyverse)
 require(readxl)
 ```
@@ -136,7 +151,7 @@ ISO Week: %s,
   stock_exchange$date[1],
   yday(stock_exchange$date[1]),
   mday(stock_exchange$date[1]),
-  wday(stock_exchange$date[1]),
+  wday(stock_exchange$date[1],week_start = 1),
   weekdays(stock_exchange$date[1]),
   month(stock_exchange$date[1]),
   month(stock_exchange$date[1], label = TRUE, abbr = FALSE),
@@ -147,7 +162,7 @@ ISO Week: %s,
 ```
 
 Unlike `python`, we don't usually convert the date column of the dataframe to index. If we would want to conduct some time-series operations, we usually convert the dataframe to a time-series object.
-```{r, message=FALSE}
+```{r, message=FALSE,warning=FALSE}
 require(xts)
 
 stockexchange_xts <- xts(stock_exchange[, -which(names(stock_exchange) == "date")], order.by = stock_exchange$date)
@@ -159,10 +174,12 @@ head(stockexchange_xts["2010-01"], 5)
 ```
 You can also explore for date range, month range and specify date after which you would like to select all the data. Basically with `/` operator you can filter your desired dataset.
 ```{r}
-head(stockexchange_xts["/2011-02"],5)
+head(stockexchange_xts["2009-01/05"],5)
 ```
-The `ts_info` function from the TSstudio package provides a concise summary of most of the preceding functions. This includes the object class, the number of observations, the frequency, and the starting and ending of the series.
-```{r}
+The `ts_info` function from the `TSstudio` package provides a concise summary of most of the preceding functions. This includes the object class, the number of observations, the frequency, and the starting and ending of the series.
+```{r,message=FALSE,warning=FALSE}
+require(TSstudio)
+
 ts_info(stockexchange_xts)
 ```
 You can also obtain a similar combination of the frequency, start, and end information by using the `periodicity` function
@@ -222,6 +239,6 @@ ts_info(FTSE_xts2)
 ```
 Furthermore, it is possible to have a more granular subset by using other elements of the index object. For instance, if you wish to extract the first 6 months of the year 2009, you can use the following structure:
 ```{r}
-FTSE_xts3 <- stockexchange_xts$FTSE["2009-01/06"]
+FTSE_xts3 <- stockexchange_xts$FTSE["2010-01/"]
 ts_info(FTSE_xts3)
 ```

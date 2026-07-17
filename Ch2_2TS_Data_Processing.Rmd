@@ -1,0 +1,613 @@
+---
+title: "Handling Missing values"
+author: "Jayita Chakraborty (PhD)"
+date: ""
+output: 
+  pdf_document:
+    latex_engine: xelatex
+geometry: "left=2cm,right=2cm,top=2cm,bottom=2cm"
+header-includes:
+  - \usepackage{xeCJK}
+  - \usepackage{booktabs}
+colorlinks: true
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+library(formatR)
+options(width = 60)
+knitr::opts_chunk$set(echo = TRUE,tidy.opts = list(width.cutoff = 60), tidy = TRUE)
+```
+
+## Handling Missing Data
+
+Missing data in time-series analysis is quite prevalent. In certain cases, you may have to think whether the data is actually missing. Before filling in the missing value with mean or zero, we have to consider the following aspects:
+
+- Let's say you have travelling distance to office of various participants over time. Now, some days you observed that the values are zero. Before arriving at the conclusion, you need to ask were these holidays, or did the person work from home at that day.
+- In our previous session, we looked at the stock price dataset. If you have observed that stock price dataset did not have data for Saturday and Sunday. This is normal. But if you fill them with zeros, the model looking at the immediate past to predict the future will generate inaccurate values, especially for Monday.
+- There can also be instances of data inaccuracies due to incorrect data entry or malfunction of the equipment involved. For example, GPS data, traffic sensor data.
+
+### Missing Data Mechanisms
+Depending on what causes missing data, the gaps will have a certain distribution. Missing data mechanisms can be divided into three categories _"Missing completely at random" (MCAR)_ , _"Missing at random" (MAR)_ and _"Not missing at random" (NMAR)_. In practice, assigning data-gaps to a category can be blurry, because the underlying mechanisms are simply unknown. 
+
+- **Missing completely at random (MCAR)**
+
+In MCAR there is no systematic mechanism on the way the data is missing. Missing data points occur entirely at random. This means there are two requirements: First, the probability for a certain observation being missing is independent from the values of other variables. Second, the probability for an observation being missing is also independent of the value of the observation itself.
+
+**Example**: Sensor data is recorded 24/7 from a field test. Due to unknown reasons and on random occasions sometimes the transmission fails.
+
+- **Missing at random (MAR)**
+
+Like in MCAR, in MAR the probability for an observation being missing is also independent of the value of the observation itself. But it is dependent on other variables.
+
+**Example**: Stock Price data are more likely to be missing on weekends (since it is shut down on some weekends).
+
+- **Not missing at random (NMAR)**
+
+NMAR observations are not missing in a random manner. The data are not MCAR and not MAR. That means, the probability for a observation being missing depends on the value of the observation itself. Furthermore the probability can (but must not necessarily) be dependent on other variables.
+
+**Example**: Temperature sensor gives no values for temperatures over 100 degrees.
+```{r message=FALSE, warning=FALSE}
+require(tidyverse)
+require(xts)
+```
+Let’s look at an Air Quality [dataset](https://www.data.act.gov.au/Environment/Air-Quality-Monitoring-Data/94a5-zqnn/explore) published by the ACT Government, Canberra, Australia, under the CC by Attribution 4.0 International License and see how we can impute such values.
+
+```{r}
+df <- read.csv("./data/Air_Quality_Monitoring_Data.csv")
+
+str(df)
+```
+We have chosen region **Monash** and **PM2.5** readings.
+```{r}
+df_filter <- df %>%
+  filter(Name=="Monash") %>%
+  select(DateTime,PM2.5)
+```
+Now, let's explore the dataset. Before we look out for any missing data, first we need to ensure that `R` recognises our **time** variable and assigns the correct data type. Now, look at the time variable in the dataset. Is it having the correct data type? Which function from **lubridate** is going to be applicable here?
+```{r echo=FALSE}
+df_filter$DateTime <- dmy_hms(df_filter$DateTime)
+```
+
+Once, we have parsed our time variable correctly, we can extract more information. Let's us extract the `date`, `hour` and `time`.
+
+```{r}
+df_filter <- df_filter %>%
+  mutate(
+    date = date(DateTime),
+    hour = hour(DateTime),
+    time = hms::as_hms(DateTime)
+  )
+```
+
+Now, we fill filter our dataset for a specific time interval and introduce some artificial missing values in the data. We are going to assign NA values randomly.
+
+The first step to any analysis should be to inspect and visualize your data. Dealing with NAs is no different. If we know there are NAs in our time series we need to see when they occur and how often. Here I’ve used `{ggplot2}` to make a custom plot to visualise the occurrence of NA values at the scale of days.
+
+```{r}
+df_filter_na <- df_filter %>%
+  mutate(PM2.5_missing = PM2.5) %>%
+  filter(
+    DateTime >= as.POSIXct("2022-01-01 00:00:00"),
+    DateTime <= as.POSIXct("2022-04-30 23:59:59")
+  )
+
+## Set seed to make it repeatable
+set.seed(1234)
+
+df_filter_na$PM2.5_missing[sample(1:(nrow(df_filter_na) - 1), size = 500)] <- NA
+
+df_filter_na %>% 
+  {ggplot() +
+      geom_line(data = ., 
+                aes(x = date, y = PM2.5_missing), 
+                colour = "steelblue2", linewidth = 1.2)+
+      geom_vline(data = filter(., is.na(PM2.5_missing)), aes(xintercept = date),
+                 colour = "indianred", alpha = 0.5) +
+      scale_x_date(expand = c(0, 0)) +
+      scale_y_continuous(expand = c(0, 0)) +
+      labs(title = "Location of missing values",
+           subtitle = "Time series with highlighted missing regions",
+           y = "PM 2.5 Concentration",
+           x = "") +
+      theme_classic()}
+
+```
+The `imputeTS` package offers implementations of various time series imputation algorithms for missing data statistics. It also provides certain visualisation functions to investigate missing data in time-series analysis. You can read more about the package [here](https://journal.r-project.org/articles/RJ-2017-009/index.html).
+The inbuilt function `ggplot_na_gapsize()` from `{imputeTS}` is handy to see how often NAs occur consecutively. We can see that most NAs occur alone.
+```{r message=FALSE, warning=FALSE}
+require(imputeTS)
+
+ggplot_na_gapsize(df_filter_na$PM2.5_missing, ranked_by = "total",
+                  theme = ggplot2::theme_classic())
+```
+
+In our previous class, we discussed about time-series objects. In `R`, there are four different time-series objects that you will come across: `ts` from base R, `zoo`,`xts` and `tsibble` from packages. Now, `ts` will always expect a regular time-series and cannot handle irregular gaps in your data. `zoo/xts` is capable of handling irregular time series. Compared to the conventional time series objects, the `tsibble` preserves time indices as the essential data column and makes heterogeneous data structures possible. You can automatically convert your `ts\zoo\xts` objects to `tsibble`. If it is a tibble or data frame, you will need to declare the index and key variables. Now, it can sometimes become confusing to choose among the available options. If you have a clean univariate regular time-series data and want to conduct some simple forecasting, you can use `ts`. If you have clean, multivariate, irregular/regular time-series data, you can use `zoo/xts`. If you are at the _initial stage of your project_, start with `tsibble`. According to me, it is not advisable to convert your data to a time-series object before you are completely sure about the pre-processing. The following figure \ref{fig1} provides a brief workflow on determining the appropriate class for your time-series data. Also look at this [blog](https://r-statistics.co/Time-Series-Objects-in-R.html) by $\color{gray}{\text{Selva Prabhakaran}}$ for further insights.
+
+![Workflow for picking the class \label{fig1}](./Image_2.png)
+
+
+```{r message=FALSE, warning=FALSE}
+require(tsibble)
+
+df_filter_tibble <- as_tsibble(df_filter_na,index = DateTime)
+```
+### Imputation Techniques
+
+Now, let’s look at a few simple techniques we can use to fill in the missing values:
+
+- **Last Observation Carried Forward or Forward Fill**: This imputation technique takes the last observed value, using that to fill in all the missing values until it finds the next observation. This is also called _forward fill_.
+
+- **Next Observation Carried Backward of Backward Fill**: This imputation technique takes the next observation and backtracks to fill in all the missing values with this value. This is also called _backward fill_.
+
+We can use this technique in R through the `na_locf` function in the `{imputeTS}` package.
+```{r}
+df_filter_tibble <- df_filter_tibble %>%
+  mutate(
+    PM2.5_ffill = na_locf(PM2.5_missing),
+    PM2.5_bfill = na_locf(PM2.5_missing,option = "nocb")
+  )
+```
+
+We will also calculate the mean and standard error from our real data to compare the techniques later.
+
+```{r}
+## The mean and SE of PM 2.5 from the real data
+fullmean <- mean(df_filter_tibble$PM2.5)
+fullSE   <- sd(df_filter_tibble$PM2.5)/sqrt(nrow(df_filter_tibble))
+
+print(paste("Full sample: Mean: ", round(fullmean, 4), " SE:", round(fullSE, 4)))
+```
+Let's check how the mean and standard error from these two techniques compare to our real data.
+```{r}
+## The mean and SE of PM 2.5 with ffill and bfill
+ffillmean <- mean(df_filter_tibble$PM2.5_ffill)
+ffillSE   <- sd(df_filter_tibble$PM2.5_ffill)/sqrt(nrow(df_filter_tibble))
+
+bfillmean <- mean(df_filter_tibble$PM2.5_bfill)
+bfillSE   <- sd(df_filter_tibble$PM2.5_bfill)/sqrt(nrow(df_filter_tibble))
+
+cat("With Forward Fill: Mean: ", round(ffillmean, 4), "SE:",round(ffillSE, 4),"\n","With Backward Fill: Mean: ", round(bfillmean, 4), " SE:", round(bfillSE, 4), "\n")
+```
+The difference is not much. We will try out some more techniques.
+
+- **Global Mean Substitution** : The simplest approach that is sometimes proposed is to replace missing data with a global mean.
+```{r}
+df_filter_tibble <- df_filter_tibble %>% 
+  mutate(
+    PM2.5_meansub = 
+      case_when(is.na(PM2.5_missing) ~ mean(PM2.5_missing, na.rm = TRUE),
+                TRUE ~ PM2.5_missing))
+```
+
+Seems easy enough, but this raises a host of serious issues. Firstly, by replacing NAs with the global mean we artificially reduce the uncertainty when we try to estimate population statistics.
+
+```{r}
+## The mean and SE of PM 2.5 conc data with global mean substitution
+## SE is (incorrectly) reduced.
+imputedmean <- mean(df_filter_tibble$PM2.5_meansub)
+imputedSE   <- sd(df_filter_tibble$PM2.5_meansub)/sqrt(nrow(df_filter_tibble))
+
+
+print(paste("With global mean substitution: Mean: ", round(imputedmean, 4), " SE:", round(imputedSE, 4)))
+```
+In the example above, we can see that the standard error of our PM 2.5 concentration estimate is (incorrectly) reduced when we replace NAs with the global mean.
+
+We will also create bias if we want to use our variable as a response in statistical analysis, like linear regression. We will tend to under-estimate the relationship between our predictor and response variable.
+```{r}
+filter(df_filter_tibble, is.na(PM2.5_missing)) %>% 
+  mutate(diff = PM2.5 - PM2.5_meansub) %>%
+  {ggplot(.) +
+      geom_density(aes(x = diff), 
+                   colour = "black", fill = "grey75",linewidth = 0.8) +
+      geom_vline(xintercept = 0, lty = 10,lwd=0.8) +
+      labs(x = "Difference between imputed and true value") +
+      scale_x_continuous(limits = c(-15, 15),
+      breaks = seq(-15, 15, 2)) +
+      scale_y_continuous(expand = c(0, 0)) +
+      theme_classic() +
+      theme(legend.title = element_blank(),legend.position = "none",
+            axis.text.y = element_blank(),
+            axis.title.y = element_blank(),
+            axis.ticks.y = element_blank(),
+            axis.line.y = element_blank(),
+            axis.text.x = element_text(size = 12),
+            axis.title.x = element_text(size = 15),
+            plot.margin = margin(10, 10, 10, 10))
+    }
+```
+So, replacing every `NA` with a global mean is not acceptable. The next method we might consider is to estimate a local mean from the two nearest known values.
+
+- **Local mean substitution**:
+Local mean substitution can already be achieved with the `approx()` function in the `base {stats}` package; however, this does not work nicely if we want to code using pipes. As an alternative, we can use the `na_interpolation()` function from the package `{imputeTS}`.
+
+Here’s what this looks like:
+```{r}
+# Use the imputeTS package
+imputeTS::na_interpolation(x = c(1, NA, 5),
+                           method = "constant", f = 0.5)
+## We need to specify the 'f' argument at 0.5                           ## to weight each point equally.
+```
+Basically, the **constant** method allows you to treat the chunks of consecutive NAs equally. Therefore, they are assigned the same value. So, when you multiple chunks of NAs, only the nearest values are considered are considered for imputation. For example,
+```{r}
+imputeTS::na_interpolation(x = c(1, NA, NA, 5), method = "constant", f = 0.5)
+imputeTS::na_interpolation(x = c(10, 1, NA, NA, 5, 1), method = "constant", f = 0.5)
+```
+Now, let's apply this technique to our data:
+```{r}
+### Replace missing values using 
+df_filter_tibble <- df_filter_tibble %>% 
+  mutate(PM2.5_localmean = imputeTS::na_interpolation(x = PM2.5_missing, method = "constant", f = 0.5))
+```
+
+```{r echo=FALSE}
+plot_data <- filter(df_filter_tibble, is.na(PM2.5_missing)) %>% 
+  mutate(ffill = PM2.5 - PM2.5_ffill,
+         bfill = PM2.5 - PM2.5_bfill,
+        globalmean = PM2.5 - PM2.5_meansub,
+         localmean = PM2.5 - PM2.5_localmean)
+
+ggplot(plot_data) +
+      geom_density(aes(x = ffill, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = bfill, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = globalmean, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = localmean, colour = "New methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_vline(xintercept = 0, lty = 10,lwd=1) +
+      labs(x = "Difference between imputed and true value") +
+      scale_x_continuous(limits = c(-15, 15),
+      breaks = seq(-15, 15, 2)) +
+      scale_y_continuous(expand = c(0, 0)) +
+      scale_colour_manual(values = c("red", "grey50")) +
+      theme_classic() +
+      theme(legend.title = element_blank(),axis.text.y = element_blank(),
+            legend.position = "inside",
+            legend.position.inside = c(0.8,0.5),
+            axis.title.y = element_blank(),
+            axis.ticks.y = element_blank(),
+            axis.line.y = element_blank(),
+            axis.text.x = element_text(size = 12),
+            axis.title.x = element_text(size = 15),
+            plot.margin = margin(10, 10, 10, 10))
+```
+By using the two closest points to impute a local mean we can substantial improvement upon the method of global mean substitution; however, in many cases we can also gain information from other data points, not just the nearest neighbours. Of course, as we move further from the NA we will gain less and less information, so we can weight the information based on the distance from our missing data. This leads us to the **weighted moving average** method that we can employ with the `na_ma()` function from `{imputeTS}`.
+
+- **Weighted Moving Average** :
+`na_ma()` has two key arguments that you need to understand:
+
+- `k`: Size of the window over which to calculate the moving average. This is the number of time steps to either side of the NA that will be used. So, for an NA at position $i$ and $k=2$, the weighted moving averaging would use observations at $i-2$, $i-1$, $i+1$ and $i+2$.
+- `weighting`: The method used to weight data. This can include:
+  - `simple`: All values are equally weighted.
+  - `linear`: Weight decreases linearly with distance from $i$. If $x$ is the distance from $i$, then the value has a weight of $1/(1+x)$, such that the nearest values have weight of $1/2$, $1/3$, $1/4$ etc.
+  - `exponential`: Weight decreases exponentially. If $x$ is the distance from $i$, then value has a weight $1/2^x$ (default).
+
+If `k=1`, we will get the same result as `na_interpolation()`. Let us see some examples:
+
+```{r}
+imputeTS::na_ma(x = c(4, 3, 1, NA, 3, 4, 10), k = 1)
+```
+
+So, we observed that we are getting the same output as `na_interpolation()`. If we expand the window (e.g. `k=3`), we include more information. Our result is no longer the same as using `na_interpolation()`.
+```{r}
+imputeTS::na_ma(x = c(4, 3, 1, NA, 3, 4, 10), k = 3, weighting = "simple")
+```
+
+Using equal weights for all points is not ideal, so we can try using alternative weighting methods. In our simple example, using linear or exponential weighting minimizes the influence of large values further away from NA.
+
+```{r}
+imputeTS::na_ma(x = c(4, 3, 1, NA, 3, 4, 10), k = 3, weighting = "linear")
+imputeTS::na_ma(x = c(4, 3, 1, NA, 3, 4, 10), k = 3, weighting = "exponential")
+```
+
+To compare the benefit of different weighting methods we will use all three. For now, we just use default window size `k = 4` (i.e. using 8 values in total towards mean).
+
+```{r}
+df_filter_tibble <- df_filter_tibble %>% 
+  mutate(PM2.5_mas = imputeTS::na_ma(x = PM2.5_missing, weighting = "simple"),
+         PM2.5_mal = imputeTS::na_ma(x = PM2.5_missing, weighting = "linear"),
+         PM2.5_mae = imputeTS::na_ma(x = PM2.5_missing, weighting = "exponential")
+         )
+```
+Now we can compare all our substitution methods: forward fill, back fill, global, local, moving average (equal weight), moving average (linear weight), moving average (exponential weight). All methods, other than global mean, seem to perform reasonably well.
+
+```{r echo=FALSE}
+plot_data <- filter(df_filter_tibble, is.na(PM2.5_missing)) %>% 
+  mutate(ffill = PM2.5 - PM2.5_ffill,
+         bfill = PM2.5 - PM2.5_bfill,
+          globalmean = PM2.5 - PM2.5_meansub,
+         localmean = PM2.5 - PM2.5_localmean,
+          movingavg_simple = PM2.5 - PM2.5_mas,
+         movingavg_linear = PM2.5 - PM2.5_mal,
+         movingavg_exp = PM2.5 - PM2.5_mae)
+
+ggplot(plot_data) +
+      geom_density(aes(x = ffill, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = bfill, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = globalmean, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = localmean, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = movingavg_simple, colour = "New methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = movingavg_linear, colour = "New methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = movingavg_exp, colour = "New methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_vline(xintercept = 0, lty = 10,lwd=1) +
+      labs(x = "Difference between imputed and true value") +
+      scale_x_continuous(limits = c(-11, 11),
+      breaks = seq(-11, 11, 2)) +
+      scale_y_continuous(expand = c(0, 0)) +
+      scale_colour_manual(values = c("red", "grey50")) +
+      theme_classic() +
+      theme(legend.title = element_blank(),axis.text.y = element_blank(),
+            legend.position = "inside",
+            legend.position.inside = c(0.8,0.5),
+            axis.title.y = element_blank(),
+            axis.ticks.y = element_blank(),
+            axis.line.y = element_blank(),
+            axis.text.x = element_text(size = 12),
+            axis.title.x = element_text(size = 15),
+            plot.margin = margin(10, 10, 10, 10))
+
+```
+- **Linear Imputation** :
+Linear imputation is one of the more common alternatives. Like our basic local mean substitution, linear imputation uses information from the two nearest known points, but instead of taking the mean of these two points it imputes the missing value(s) assuming there is a linear trend in our variable over time.
+
+To do this, we are going back to the `na_interpolation()` function, but this time we use the argument option=‘linear’. If we have a single NA value, linear imputation and local mean substitution will produce the same result.
+
+```{r}
+# Assume a linear relationship of x over time,
+imputeTS::na_interpolation(x = c(1, NA, NA, 3), option = "linear")
+# Take the mean of the two closest points
+imputeTS::na_interpolation(x = c(1, NA, NA, 3), method = "constant", f = 0.5)
+```
+If you observe the difference in the outputs between these functions are that unlike local mean substitution, chunks of NAs are given different values. Previously based on our `ggplot_na_gapsize`, we observed that most of the NAs in our data are non-consecutive, i.e., they are isolated from each other. So our linear imputation method will be very similar to local mean substitution in this case.
+
+```{r}
+df_filter_tibble <- df_filter_tibble %>% 
+  mutate(PM2.5_linearinterp = imputeTS::na_interpolation(x = PM2.5_missing, option = "linear"))
+```
+
+```{r echo=FALSE}
+plot_data <- filter(df_filter_tibble, is.na(PM2.5_missing)) %>% 
+  mutate(ffill = PM2.5 - PM2.5_ffill,
+         bfill = PM2.5 - PM2.5_bfill,
+          globalmean = PM2.5 - PM2.5_meansub,
+         localmean = PM2.5 - PM2.5_localmean,
+          movingavg_simple = PM2.5 - PM2.5_mas,
+         movingavg_linear = PM2.5 - PM2.5_mal,
+         movingavg_exp = PM2.5 - PM2.5_mae,
+         linearinterp = PM2.5 - PM2.5_linearinterp)
+
+ggplot(plot_data) +
+      geom_density(aes(x = ffill, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = bfill, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = globalmean, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = localmean, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = movingavg_simple, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = movingavg_linear, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = movingavg_exp, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = linearinterp, colour = "New methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_vline(xintercept = 0, lty = 10,lwd=1) +
+      labs(x = "Difference between imputed and true value") +
+      scale_x_continuous(limits = c(-11, 11),
+      breaks = seq(-11, 11, 2)) +
+      scale_y_continuous(expand = c(0, 0)) +
+      scale_colour_manual(values = c("red", "grey50")) +
+      theme_classic() +
+      theme(legend.title = element_blank(),axis.text.y = element_blank(),
+            legend.position = "inside",
+            legend.position.inside = c(0.8,0.5),
+            axis.title.y = element_blank(),
+            axis.ticks.y = element_blank(),
+            axis.line.y = element_blank(),
+            axis.text.x = element_text(size = 12),
+            axis.title.x = element_text(size = 15),
+            plot.margin = margin(10, 10, 10, 10))
+```
+- **Spline Interpolation** :
+If we want to relax the assumption of linear change over time, we can instead use spline interpolation. Spline interpolation, as the name suggests, imputes missing values by fitting a spline through nearby known points. Unlike linear interpolation, spline interpolation uses more data either side of missing value, making it potentially more powerful.
+
+To achieve spline interpolation we still use the `na_interpolation()` function, but now specify option = “spline” instead of “linear”.
+
+```{r}
+# Fit spline through known data to estimate NA
+imputeTS::na_interpolation(x = c(3, 2.5, 2, 1, NA, 0.75, 0, -0.5, -1), option = "spline")
+```
+There are a range of different spline functions that might have different success. We can pick the spline method used with the ‘method’ argument. There are **5 types** of splines available, such as, `fmm`, `periodic`, `natural`, `monoH.FC` and `hyman`. We can see the different spline fits below.
+
+```{r echo=FALSE,warning=FALSE}
+test_df <- tibble(x = 1:9,
+                  y = c(3, 2.5, 2, 1, NA, 0.75, 0, -0.5, -1))
+
+fmm_func <- splinefun(x = test_df$y, method = "fmm")
+periodic_func <- splinefun(x = test_df$y, method = "periodic")
+natural_func <- splinefun(x = test_df$y, method = "natural")
+monoH.FC_func <- splinefun(x = test_df$y, method = "monoH.FC")
+hyman_func <- splinefun(x = test_df$y, method = "hyman")
+
+spline_df <- tibble(x = seq(1, 9, 0.1)) %>% 
+  mutate(fmm = fmm_func(x = x),
+         periodic = periodic_func(x = x),
+         natural = natural_func(x = x),
+         monoH.FC = monoH.FC_func(x = x),
+         hyman = hyman_func(x = x)) %>% 
+  tidyr::pivot_longer(cols = fmm:hyman, names_to = "spline", values_to = "y")
+
+ggplot()+
+  geom_point(data = test_df, aes(x = x, y = y)) +
+  geom_line(data = spline_df, aes(x = x, y = y, lty = spline),linewidth = 1) +
+  theme_classic()
+```
+
+For our PM 2.5 concentration data, we focus on three methods only (‘fmm’, ‘periodic’, and ‘natural’). The two other available methods (‘monoH’ and ‘hyman’) assume monotonic data (i.e. data should either never increase or decrease) and so are not appropriate for air quality data.
+```{r warning=FALSE}
+## Fit all different splines that we can compare
+df_filter_tibble <- df_filter_tibble %>% 
+  mutate(PM2.5_fmm = imputeTS::na_interpolation(x = PM2.5_missing, option = "spline", method = "fmm"),
+         PM2.5_periodic = imputeTS::na_interpolation(x = PM2.5_missing, option = "spline", method = "periodic"),
+         PM2.5_natural = imputeTS::na_interpolation(x = PM2.5_missing, option = "spline", method = "natural")
+  )
+```
+
+```{r include=FALSE}
+plot_data <- filter(df_filter_tibble, is.na(PM2.5_missing)) %>% 
+  mutate(ffill = PM2.5 - PM2.5_ffill,
+         bfill = PM2.5 - PM2.5_bfill,
+          globalmean = PM2.5 - PM2.5_meansub,
+         localmean = PM2.5 - PM2.5_localmean,
+          movingavg_simple = PM2.5 - PM2.5_mas,
+         movingavg_linear = PM2.5 - PM2.5_mal,
+         movingavg_exp = PM2.5 - PM2.5_mae,
+         linearinterp = PM2.5 - PM2.5_linearinterp,
+         splinefmm = PM2.5 - PM2.5_fmm,
+         splineperiodic = PM2.5 - PM2.5_periodic,
+         splinenatural = PM2.5 - PM2.5_natural)
+
+ggplot(plot_data) +
+      geom_density(aes(x = ffill, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = bfill, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = globalmean, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = localmean, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = movingavg_simple, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = movingavg_linear, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = movingavg_exp, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = linearinterp, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = splinefmm, colour = "New methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = splineperiodic, colour = "New methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = splinenatural, colour = "New methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_vline(xintercept = 0, lty = 10,lwd=1) +
+      labs(x = "Difference between imputed and true value") +
+      scale_x_continuous(limits = c(-11, 11),
+      breaks = seq(-11, 11, 2)) +
+      scale_y_continuous(expand = c(0, 0)) +
+      scale_colour_manual(values = c("red", "grey50")) +
+      theme_classic() +
+      theme(legend.title = element_blank(),axis.text.y = element_blank(),
+            legend.position = "inside",
+            legend.position.inside = c(0.8,0.5),
+            axis.title.y = element_blank(),
+            axis.ticks.y = element_blank(),
+            axis.line.y = element_blank(),
+            axis.text.x = element_text(size = 12),
+            axis.title.x = element_text(size = 15),
+            plot.margin = margin(10, 10, 10, 10))
+```
+- **Stineman imputation** :
+The final method we can try is the Stineman imputation method. The algorithm of **Stineman (1980)** is designed specifically for data imputation. We won’t go into the algorithm details. But, you can find out more about the algorithm [here](https://pages.uoregon.edu/dgavin/software/stineman.pdf). One advantage of this method is it avoids generating any **'wild'** points.
+```{r}
+imputeTS::na_interpolation(x = c(3, 2.5, 2, 1, NA, 0.75, 0, -0.5, -1), option = "stine")
+```
+```{r}
+df_filter_tibble <- df_filter_tibble %>% 
+  mutate(PM2.5_stine = imputeTS::na_interpolation(x = PM2.5_missing, option = "stine")
+  )
+```
+
+```{r include=FALSE}
+plot_data <- filter(df_filter_tibble, is.na(PM2.5_missing)) %>% 
+  mutate(ffill = PM2.5 - PM2.5_ffill,
+         bfill = PM2.5 - PM2.5_bfill,
+          globalmean = PM2.5 - PM2.5_meansub,
+         localmean = PM2.5 - PM2.5_localmean,
+          movingavg_simple = PM2.5 - PM2.5_mas,
+         movingavg_linear = PM2.5 - PM2.5_mal,
+         movingavg_exp = PM2.5 - PM2.5_mae,
+         linearinterp = PM2.5 - PM2.5_linearinterp,
+         splinefmm = PM2.5 - PM2.5_fmm,
+         splineperiodic = PM2.5 - PM2.5_periodic,
+         splinenatural = PM2.5 - PM2.5_natural,
+         stinemethod = PM2.5 - PM2.5_stine)
+
+ggplot(plot_data) +
+      geom_density(aes(x = ffill, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = bfill, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = globalmean, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = localmean, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = movingavg_simple, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = movingavg_linear, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = movingavg_exp, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = linearinterp, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = splinefmm, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = splineperiodic, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = splinenatural, colour = "Previous methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_density(aes(x = stinemethod, colour = "New methods"),
+      fill = NA, linewidth = 1, alpha = 0.5) +
+      geom_vline(xintercept = 0, lty = 10,lwd=1) +
+      labs(x = "Difference between imputed and true value") +
+      scale_x_continuous(limits = c(-11, 11),
+      breaks = seq(-11, 11, 2)) +
+      scale_y_continuous(expand = c(0, 0)) +
+      scale_colour_manual(values = c("red", "grey50")) +
+      theme_classic() +
+      theme(legend.title = element_blank(),axis.text.y = element_blank(),
+            legend.position = "inside",
+            legend.position.inside = c(0.8,0.5),
+            axis.title.y = element_blank(),
+            axis.ticks.y = element_blank(),
+            axis.line.y = element_blank(),
+            axis.text.x = element_text(size = 12),
+            axis.title.x = element_text(size = 15),
+            plot.margin = margin(10, 10, 10, 10))
+```
+
+Until now we’ve used a graphical comparison of real and imputed PM 2.5 concentration data to compare methods. This is good enough to spot bad methods (like global mean substitution), but it doesn’t allow for a quantitative comparison of methods. For a more refined comparison we can use metrics such as **mean squared error (MSE)** and **root mean squared error (RMSE)**. These two metrics are slightly different, but in both cases we want to minimize error. RMSE benefits from being in the same units as our variable ($\mu/m^3$ in our case). MSE is not in true units, but is more sensitive to outliers.
+```{r}
+validation_stats <- df_filter_tibble %>%
+  as_tibble() %>%
+  ## Filter only those cases where data are missing
+  filter(is.na(PM2.5_missing)) %>%
+  tidyr::pivot_longer(cols = PM2.5_ffill:PM2.5_stine, values_to = "imputed", names_to = "method") %>%
+  mutate(sqdiff = (imputed - PM2.5)^2) %>%
+  group_by(method) %>%
+  summarise(
+    MSE = sum(sqdiff)/n(),
+    RMSE = sqrt(MSE)
+  ) %>%
+  arrange(RMSE)
+
+full_names <- data.frame(method = c("PM2.5_stine", "PM2.5_linearinterp", "PM2.5_localmean", "PM2.5_periodic", "PM2.5_fmm", "PM2.5_natural", "PM2.5_mae", "PM2.5_mal", "PM2.5_mas", "PM2.5_meansub","PM2.5_bfill","PM2.5_ffill"),
+                         name = c("Stineman", "Linear imputation", "Local mean", "Spline (periodic)", "Spline (fmm)", "Spline (Natural)", "Weighted mean (exponential)", "Weighted mean (linear)", "Weighted mean (Equal weight)", "Global mean","Next Observation Carried Backward","Last Observation Carried Forward"))
+
+validation_stats %>%
+  left_join(full_names, by = "method") %>%
+  select(name, MSE, RMSE)
+```
+
+As expected, global mean substitution is noticeably worse than all other methods. It’s particularly bad in terms of MSE, as it can produce very large outliers. At the other end, all the Spline interpoltaion method comes out on top but it is almost indistinguishable from results with much simpler linear imputation or local mean substitution. For our air quality data on PM 2.5 concentration, any of these methods would likely be acceptable.

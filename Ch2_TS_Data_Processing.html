@@ -388,7 +388,7 @@ time_ct &lt;- Sys.time()
 
 date; time_ct</code></pre>
 <pre><code>## [1] &quot;2026-07-15&quot;</code></pre>
-<pre><code>## [1] &quot;2026-07-15 16:31:53 CEST&quot;</code></pre>
+<pre><code>## [1] &quot;2026-07-15 17:59:00 CEST&quot;</code></pre>
 <pre class="r"><code># Let&#39;s check the class of the two objects:
 class(date);class(time_ct)</code></pre>
 <pre><code>## [1] &quot;Date&quot;</code></pre>
@@ -405,15 +405,15 @@ to investigate the internal format.</p>
 class(time_lt)</code></pre>
 <pre><code>## [1] &quot;POSIXlt&quot; &quot;POSIXt&quot;</code></pre>
 <pre class="r"><code>unclass(time_ct) ;unclass(time_lt)</code></pre>
-<pre><code>## [1] 1784125914</code></pre>
+<pre><code>## [1] 1784131141</code></pre>
 <pre><code>## $sec
-## [1] 53.71167
+## [1] 0.965215
 ## 
 ## $min
-## [1] 31
+## [1] 59
 ## 
 ## $hour
-## [1] 16
+## [1] 17
 ## 
 ## $mday
 ## [1] 15
@@ -529,9 +529,8 @@ commonly used software:</p>
 <p>Now, let’s work with some examples to conduct datetime manipulations
 in the real world data. First we will load some packages which will be
 useful.</p>
-<pre class="r"><code>require(tidyverse)</code></pre>
-<pre><code>## Warning: package &#39;stringr&#39; was built under R version 4.5.3</code></pre>
-<pre class="r"><code>require(readxl)</code></pre>
+<pre class="r"><code>require(tidyverse)
+require(readxl)</code></pre>
 <p>We will be using the stock exchange <code>price dataset</code> from
 the <a href="https://archive.ics.uci.edu/dataset/247/istanbul+stock+exchange">UCI
 Machine Learning Repository</a>.</p>
@@ -699,262 +698,176 @@ ISO Week: %s,
 of the dataframe to index. If we would want to conduct some time-series
 operations, we usually convert the dataframe to a time-series
 object.</p>
-<pre class="r"><code>require(xts)</code></pre>
-<pre><code>## Warning: package &#39;xts&#39; was built under R version 4.5.3</code></pre>
-<pre><code>## Warning: package &#39;zoo&#39; was built under R version 4.5.3</code></pre>
-<pre class="r"><code>stockexchange_xts &lt;- xts(stock_exchange[, -which(names(stock_exchange) == &quot;date&quot;)], order.by = stock_exchange$date)</code></pre>
+<pre class="r"><code>require(xts)
+
+stockexchange_xts &lt;- xts(stock_exchange[, -which(names(stock_exchange) == &quot;date&quot;)], order.by = stock_exchange$date)</code></pre>
 <p>Now, using the date you can pull up lot of information you need.
 Let’s try to get the values recorded during the month of
 <code>January, 2010</code>.</p>
-<pre class="r"><code>knitr::kable(stockexchange_xts[&quot;2010-01&quot;])</code></pre>
-<table>
-<colgroup>
-<col width="11%" />
-<col width="11%" />
-<col width="11%" />
-<col width="11%" />
-<col width="11%" />
-<col width="11%" />
-<col width="11%" />
-<col width="11%" />
-<col width="11%" />
-</colgroup>
-<thead>
-<tr class="header">
-<th align="right">ISE…2</th>
-<th align="right">ISE…3</th>
-<th align="right">SP</th>
-<th align="right">DAX</th>
-<th align="right">FTSE</th>
-<th align="right">NIKKEI</th>
-<th align="right">BOVESPA</th>
-<th align="right">EU</th>
-<th align="right">EM</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td align="right">0.010229371</td>
-<td align="right">0.014477562</td>
-<td align="right">0.015916069</td>
-<td align="right">0.000000000</td>
-<td align="right">0.016017643</td>
-<td align="right">0.000000000</td>
-<td align="right">0.000000000</td>
-<td align="right">0.0167777630</td>
-<td align="right">0.008399010</td>
-</tr>
-<tr class="even">
-<td align="right">0.013898022</td>
-<td align="right">0.024018915</td>
-<td align="right">0.003110806</td>
-<td align="right">-0.002721820</td>
-<td align="right">0.004028020</td>
-<td align="right">0.002534611</td>
-<td align="right">0.002780057</td>
-<td align="right">0.0013158200</td>
-<td align="right">0.008066740</td>
-</tr>
-<tr class="odd">
-<td align="right">0.007956979</td>
-<td align="right">0.005706348</td>
-<td align="right">0.000545376</td>
-<td align="right">0.000409408</td>
-<td align="right">0.001357159</td>
-<td align="right">0.004634515</td>
-<td align="right">0.006937723</td>
-<td align="right">0.0005857080</td>
-<td align="right">0.005329620</td>
-</tr>
-<tr class="even">
-<td align="right">0.007771749</td>
-<td align="right">0.007498474</td>
-<td align="right">0.003993283</td>
-<td align="right">-0.002483888</td>
-<td align="right">-0.000596923</td>
-<td align="right">-0.004650430</td>
-<td align="right">-0.003938240</td>
-<td align="right">-0.0003595890</td>
-<td align="right">-0.006374655</td>
-</tr>
-<tr class="odd">
-<td align="right">-0.003189192</td>
-<td align="right">0.000835311</td>
-<td align="right">0.002877549</td>
-<td align="right">0.003027297</td>
-<td align="right">0.001356129</td>
-<td align="right">0.010862314</td>
-<td align="right">-0.002672088</td>
-<td align="right">0.0035544230</td>
-<td align="right">0.001229253</td>
-</tr>
-<tr class="even">
-<td align="right">-0.016130747</td>
-<td align="right">-0.006032639</td>
-<td align="right">0.001745232</td>
-<td align="right">0.000478552</td>
-<td align="right">0.000704461</td>
-<td align="right">0.007456628</td>
-<td align="right">0.002416559</td>
-<td align="right">-0.0004976770</td>
-<td align="right">0.005447372</td>
-</tr>
-<tr class="odd">
-<td align="right">-0.004548630</td>
-<td align="right">-0.004338703</td>
-<td align="right">-0.009425438</td>
-<td align="right">-0.016272734</td>
-<td align="right">-0.007139781</td>
-<td align="right">0.000000000</td>
-<td align="right">-0.005081536</td>
-<td align="right">-0.0098934070</td>
-<td align="right">-0.003729203</td>
-</tr>
-<tr class="even">
-<td align="right">0.017559249</td>
-<td align="right">0.021362493</td>
-<td align="right">0.008291384</td>
-<td align="right">0.003383132</td>
-<td align="right">-0.004593435</td>
-<td align="right">-0.013334968</td>
-<td align="right">0.004399805</td>
-<td align="right">-0.0000747122</td>
-<td align="right">-0.007263452</td>
-</tr>
-<tr class="odd">
-<td align="right">0.002073920</td>
-<td align="right">-0.002075816</td>
-<td align="right">0.002423567</td>
-<td align="right">0.004307228</td>
-<td align="right">0.004502500</td>
-<td align="right">0.015954902</td>
-<td align="right">-0.008331836</td>
-<td align="right">0.0054996970</td>
-<td align="right">0.002312679</td>
-</tr>
-<tr class="even">
-<td align="right">-0.013516994</td>
-<td align="right">-0.015515838</td>
-<td align="right">-0.010882186</td>
-<td align="right">-0.019033264</td>
-<td align="right">-0.007814822</td>
-<td align="right">0.006799546</td>
-<td align="right">-0.011860723</td>
-<td align="right">-0.0111146640</td>
-<td align="right">-0.002056452</td>
-</tr>
-<tr class="odd">
-<td align="right">0.010044257</td>
-<td align="right">0.013494937</td>
-<td align="right">0.012422194</td>
-<td align="right">0.007220334</td>
-<td align="right">0.007123448</td>
-<td align="right">-0.011633501</td>
-<td align="right">0.006113663</td>
-<td align="right">0.0054031050</td>
-<td align="right">0.001725396</td>
-</tr>
-<tr class="even">
-<td align="right">0.011097874</td>
-<td align="right">0.007783483</td>
-<td align="right">0.000000000</td>
-<td align="right">0.009740279</td>
-<td align="right">0.003397687</td>
-<td align="right">-0.008342332</td>
-<td align="right">0.007293120</td>
-<td align="right">0.0052962370</td>
-<td align="right">0.002118634</td>
-</tr>
-<tr class="odd">
-<td align="right">0.005597110</td>
-<td align="right">0.002293962</td>
-<td align="right">-0.010654438</td>
-<td align="right">-0.021128600</td>
-<td align="right">-0.016883672</td>
-<td align="right">-0.002546691</td>
-<td align="right">-0.024749831</td>
-<td align="right">-0.0175931070</td>
-<td align="right">-0.009050756</td>
-</tr>
-<tr class="even">
-<td align="right">-0.003033665</td>
-<td align="right">-0.013011370</td>
-<td align="right">-0.019126605</td>
-<td align="right">-0.018030406</td>
-<td align="right">-0.015935777</td>
-<td align="right">0.012116266</td>
-<td align="right">-0.028707259</td>
-<td align="right">-0.0137765350</td>
-<td align="right">-0.014855548</td>
-</tr>
-<tr class="odd">
-<td align="right">-0.023856682</td>
-<td align="right">-0.027452668</td>
-<td align="right">-0.022389806</td>
-<td align="right">-0.009027974</td>
-<td align="right">-0.006034931</td>
-<td align="right">-0.025898322</td>
-<td align="right">-0.000754774</td>
-<td align="right">-0.0081994450</td>
-<td align="right">-0.012384604</td>
-</tr>
-<tr class="even">
-<td align="right">0.005236694</td>
-<td align="right">0.003951546</td>
-<td align="right">0.004587541</td>
-<td align="right">-0.011292033</td>
-<td align="right">-0.008084639</td>
-<td align="right">-0.007378995</td>
-<td align="right">-0.010566044</td>
-<td align="right">-0.0076674360</td>
-<td align="right">-0.004143634</td>
-</tr>
-<tr class="odd">
-<td align="right">0.000671833</td>
-<td align="right">-0.008489498</td>
-<td align="right">-0.004212071</td>
-<td align="right">0.006647636</td>
-<td align="right">0.003150745</td>
-<td align="right">-0.017987842</td>
-<td align="right">0.000000000</td>
-<td align="right">0.0038817090</td>
-<td align="right">-0.017437655</td>
-</tr>
-<tr class="even">
-<td align="right">-0.004547723</td>
-<td align="right">0.000287764</td>
-<td align="right">0.004868323</td>
-<td align="right">-0.004549107</td>
-<td align="right">-0.011320444</td>
-<td align="right">-0.007114645</td>
-<td align="right">-0.006952874</td>
-<td align="right">-0.0101274610</td>
-<td align="right">-0.007275356</td>
-</tr>
-<tr class="odd">
-<td align="right">0.012852447</td>
-<td align="right">0.012920276</td>
-<td align="right">-0.011888153</td>
-<td align="right">-0.018397215</td>
-<td align="right">-0.013856946</td>
-<td align="right">0.015698290</td>
-<td align="right">0.007929139</td>
-<td align="right">-0.0122744090</td>
-<td align="right">0.010577309</td>
-</tr>
-<tr class="even">
-<td align="right">-0.002190987</td>
-<td align="right">-0.000908373</td>
-<td align="right">-0.009877767</td>
-<td align="right">0.012280944</td>
-<td align="right">0.008283224</td>
-<td align="right">-0.020983357</td>
-<td align="right">-0.002839913</td>
-<td align="right">0.0100725360</td>
-<td align="right">-0.006314758</td>
-</tr>
-</tbody>
-</table>
+<pre class="r"><code>head(stockexchange_xts[&quot;2010-01&quot;], 5)</code></pre>
+<pre><code>##                 ISE...2     ISE...3          SP          DAX         FTSE
+## 2010-01-04  0.010229371 0.014477562 0.015916069  0.000000000  0.016017643
+## 2010-01-05  0.013898022 0.024018915 0.003110806 -0.002721820  0.004028020
+## 2010-01-06  0.007956979 0.005706348 0.000545376  0.000409408  0.001357159
+## 2010-01-07  0.007771749 0.007498474 0.003993283 -0.002483888 -0.000596923
+## 2010-01-08 -0.003189192 0.000835311 0.002877549  0.003027297  0.001356129
+##                  NIKKEI      BOVESPA           EU           EM
+## 2010-01-04  0.000000000  0.000000000  0.016777763  0.008399010
+## 2010-01-05  0.002534611  0.002780057  0.001315820  0.008066740
+## 2010-01-06  0.004634515  0.006937723  0.000585708  0.005329620
+## 2010-01-07 -0.004650430 -0.003938240 -0.000359589 -0.006374655
+## 2010-01-08  0.010862314 -0.002672088  0.003554423  0.001229253</code></pre>
+<p>You can also explore for date range, month range and specify date
+after which you would like to select all the data. Basically with
+<code>/</code> operator you can filter your desired dataset.</p>
+<pre class="r"><code>head(stockexchange_xts[&quot;/2011-02&quot;],5)</code></pre>
+<pre><code>##                 ISE...2      ISE...3           SP          DAX         FTSE
+## 2009-01-05  0.035753708  0.038376187 -0.004679315  0.002193419  0.003894376
+## 2009-01-06  0.025425873  0.031812743  0.007786738  0.008455341  0.012865611
+## 2009-01-07 -0.028861730 -0.026352966 -0.030469134 -0.017833062 -0.028734593
+## 2009-01-08 -0.062208079 -0.084715902  0.003391364 -0.011726277 -0.000465999
+## 2009-01-09  0.009859905  0.009658112 -0.021533208 -0.019872754 -0.012709717
+##                  NIKKEI     BOVESPA           EU           EM
+## 2009-01-05  0.000000000  0.03119023  0.012698039  0.028524462
+## 2009-01-06  0.004162452  0.01891958  0.011340652  0.008772644
+## 2009-01-07  0.017292932 -0.03589858 -0.017072795 -0.020015412
+## 2009-01-08 -0.040061309  0.02828315 -0.005560959 -0.019423778
+## 2009-01-09 -0.004473502 -0.00976388 -0.010988634 -0.007802212</code></pre>
+<p>The <code>ts_info</code> function from the <code>TSstudio</code>
+package provides a concise summary of most of the preceding functions.
+This includes the object class, the number of observations, the
+frequency, and the starting and ending of the series.</p>
+<pre class="r"><code>require(TSstudio)
+
+ts_info(stockexchange_xts)</code></pre>
+<pre><code>##  The stockexchange_xts series is a xts object with 9 variables and 536 observations
+##  Frequency: daily 
+##  Start time: 2009-01-05 
+##  End time: 2011-02-22</code></pre>
+<p>You can also obtain a similar combination of the frequency, start,
+and end information by using the <code>periodicity</code> function</p>
+<pre class="r"><code>periodicity(stockexchange_xts)</code></pre>
+<pre><code>## Daily periodicity from 2009-01-05 to 2011-02-22</code></pre>
+<p>The <code>is.regular</code> function can be used for identifying
+whether a <code>xts/zoo</code> object is regular or not. If the
+<code>strict</code> argument of the function is set to
+<strong>TRUE</strong>, the function will test whether the object is
+strictly regular.</p>
+<pre class="r"><code>is.regular(stockexchange_xts)</code></pre>
+<pre><code>## [1] TRUE</code></pre>
+<p>Let us now look at the data type of the index of our <code>xts</code>
+object using the <code>class</code> function.</p>
+<pre class="r"><code>class(index(stockexchange_xts))</code></pre>
+<pre><code>## [1] &quot;Date&quot;</code></pre>
+<p><code>as.yearmon</code> and <code>as.yearqtr</code> are two
+conversion functions that allow us to convert Date objects to
+<code>yearmon</code> and <code>yearqtr</code> objects, respectively.
+This can help us in indexing a monthly and quarterly series. These
+functions are a part of the <code>zoo</code> package. Let’s see an
+example:</p>
+<pre class="r"><code>monthly_dates &lt;- seq.Date(from = as.Date(&quot;2019-01-01&quot;), length.out = 12, by
+= &quot;month&quot;)
+head(monthly_dates)</code></pre>
+<pre><code>## [1] &quot;2019-01-01&quot; &quot;2019-02-01&quot; &quot;2019-03-01&quot; &quot;2019-04-01&quot; &quot;2019-05-01&quot;
+## [6] &quot;2019-06-01&quot;</code></pre>
+<pre class="r"><code>monthly_yearmon &lt;- as.yearmon(monthly_dates)
+head(monthly_yearmon)</code></pre>
+<pre><code>## [1] &quot;Jan 2019&quot; &quot;Feb 2019&quot; &quot;Mar 2019&quot; &quot;Apr 2019&quot; &quot;May 2019&quot; &quot;Jun 2019&quot;</code></pre>
+<p>Let’s now apply it on our data:</p>
+<pre class="r"><code>head(as.yearmon(index(stockexchange_xts)),5)</code></pre>
+<pre><code>## [1] &quot;Jan 2009&quot; &quot;Jan 2009&quot; &quot;Jan 2009&quot; &quot;Jan 2009&quot; &quot;Jan 2009&quot;</code></pre>
+<pre class="r"><code>head(as.yearqtr(index(stockexchange_xts)),5)</code></pre>
+<pre><code>## [1] &quot;2009 Q1&quot; &quot;2009 Q1&quot; &quot;2009 Q1&quot; &quot;2009 Q1&quot; &quot;2009 Q1&quot;</code></pre>
+<p>Apart from the above functions, The <strong>xts</strong> package
+provides us with a set of functions for handling the index of the
+<code>xts</code> object. The <code>indexClass</code> family of functions
+provides us with a set of tools for extracting or replacing the
+<code>xts</code> class index. The <code>convertIndex</code> function
+converts the class of the object index.</p>
+<pre class="r"><code>head(convertIndex(stockexchange_xts,&quot;yearmon&quot;),5)</code></pre>
+<pre><code>##               ISE...2      ISE...3           SP          DAX         FTSE
+## Jan 2009  0.035753708  0.038376187 -0.004679315  0.002193419  0.003894376
+## Jan 2009  0.025425873  0.031812743  0.007786738  0.008455341  0.012865611
+## Jan 2009 -0.028861730 -0.026352966 -0.030469134 -0.017833062 -0.028734593
+## Jan 2009 -0.062208079 -0.084715902  0.003391364 -0.011726277 -0.000465999
+## Jan 2009  0.009859905  0.009658112 -0.021533208 -0.019872754 -0.012709717
+##                NIKKEI     BOVESPA           EU           EM
+## Jan 2009  0.000000000  0.03119023  0.012698039  0.028524462
+## Jan 2009  0.004162452  0.01891958  0.011340652  0.008772644
+## Jan 2009  0.017292932 -0.03589858 -0.017072795 -0.020015412
+## Jan 2009 -0.040061309  0.02828315 -0.005560959 -0.019423778
+## Jan 2009 -0.004473502 -0.00976388 -0.010988634 -0.007802212</code></pre>
+<pre class="r"><code>head(convertIndex(stockexchange_xts,&quot;yearqtr&quot;),5)</code></pre>
+<pre><code>##              ISE...2      ISE...3           SP          DAX         FTSE
+## 2009 Q1  0.035753708  0.038376187 -0.004679315  0.002193419  0.003894376
+## 2009 Q1  0.025425873  0.031812743  0.007786738  0.008455341  0.012865611
+## 2009 Q1 -0.028861730 -0.026352966 -0.030469134 -0.017833062 -0.028734593
+## 2009 Q1 -0.062208079 -0.084715902  0.003391364 -0.011726277 -0.000465999
+## 2009 Q1  0.009859905  0.009658112 -0.021533208 -0.019872754 -0.012709717
+##               NIKKEI     BOVESPA           EU           EM
+## 2009 Q1  0.000000000  0.03119023  0.012698039  0.028524462
+## 2009 Q1  0.004162452  0.01891958  0.011340652  0.008772644
+## 2009 Q1  0.017292932 -0.03589858 -0.017072795 -0.020015412
+## 2009 Q1 -0.040061309  0.02828315 -0.005560959 -0.019423778
+## 2009 Q1 -0.004473502 -0.00976388 -0.010988634 -0.007802212</code></pre>
+<p>In addition, the <code>indexClass</code> function provides a set of
+functions for extracting the date or time component of the object index.
+For example, the <code>.indexwday</code> function returns the
+corresponding days of the week:</p>
+<pre class="r"><code>head(.indexwday(stockexchange_xts))</code></pre>
+<pre><code>## [1] 1 2 3 4 5 1</code></pre>
+<p>Another useful function is <code>indexFormat</code>, which allows us
+to modify the index format. We will utilize the function to modify the
+index format from <strong>year, month, day (y-m-d) to day, month, year
+(d-m-y)</strong>:</p>
+<pre class="r"><code>indexFormat(stockexchange_xts) &lt;- &quot;%d-%m-%Y&quot;
+
+head(stockexchange_xts)</code></pre>
+<pre><code>##                 ISE...2      ISE...3           SP          DAX         FTSE
+## 05-01-2009  0.035753708  0.038376187 -0.004679315  0.002193419  0.003894376
+## 06-01-2009  0.025425873  0.031812743  0.007786738  0.008455341  0.012865611
+## 07-01-2009 -0.028861730 -0.026352966 -0.030469134 -0.017833062 -0.028734593
+## 08-01-2009 -0.062208079 -0.084715902  0.003391364 -0.011726277 -0.000465999
+## 09-01-2009  0.009859905  0.009658112 -0.021533208 -0.019872754 -0.012709717
+## 12-01-2009 -0.029191028 -0.042361155 -0.022822626 -0.013525735 -0.005025533
+##                  NIKKEI     BOVESPA           EU           EM
+## 05-01-2009  0.000000000  0.03119023  0.012698039  0.028524462
+## 06-01-2009  0.004162452  0.01891958  0.011340652  0.008772644
+## 07-01-2009  0.017292932 -0.03589858 -0.017072795 -0.020015412
+## 08-01-2009 -0.040061309  0.02828315 -0.005560959 -0.019423778
+## 09-01-2009 -0.004473502 -0.00976388 -0.010988634 -0.007802212
+## 12-01-2009 -0.049038532 -0.05384947 -0.012451259 -0.022629745</code></pre>
+<p>As the <code>xts</code> class is a <strong>semi-data frame</strong>,
+it is relatively simple to manipulate or extract data by using a
+<code>data.frame</code> style. Moreover, it is possible to retrieve data
+based on a specific time range using the series index. For example,
+let’s say that you wish to extract the first 12 observations of the FTSE
+data from the stock price dataset that we created.</p>
+<pre class="r"><code>FTSE_xts1 &lt;- stockexchange_xts$FTSE[1:12]
+ts_info(FTSE_xts1)</code></pre>
+<pre><code>##  The FTSE_xts1 series is a xts object with 1 variable and 12 observations
+##  Frequency: daily 
+##  Start time: 2009-01-05 
+##  End time: 2009-01-20</code></pre>
+<p>The <code>xts</code> object supports text-based queries for
+subsetting the series. For instance, we can extract the first year of
+the series by specifying the year value (that is, 2009):</p>
+<pre class="r"><code>FTSE_xts2 &lt;- stockexchange_xts$FTSE[&quot;2009&quot;]
+ts_info(FTSE_xts2)</code></pre>
+<pre><code>##  The FTSE_xts2 series is a xts object with 1 variable and 250 observations
+##  Frequency: daily 
+##  Start time: 2009-01-05 
+##  End time: 2009-12-31</code></pre>
+<p>Furthermore, it is possible to have a more granular subset by using
+other elements of the index object. For instance, if you wish to extract
+the first 6 months of the year 2009, you can use the following
+structure:</p>
+<pre class="r"><code>FTSE_xts3 &lt;- stockexchange_xts$FTSE[&quot;2009-01/06&quot;]
+ts_info(FTSE_xts3)</code></pre>
+<pre><code>##  The FTSE_xts3 series is a xts object with 1 variable and 124 observations
+##  Frequency: daily 
+##  Start time: 2009-01-05 
+##  End time: 2009-06-30</code></pre>
 </div>
 
 
