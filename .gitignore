@@ -2,12 +2,13 @@
 .Rhistory
 .RData
 .Ruserdata
-.txt
-.html
-.log
-.webp
 App_1_Prompt_Extraction.Rmd
 Emissions_data.R
 TS_Demo.R
 Image_1.PNG
 Image_2.PNG
+Time-Series-Objects-in-R-choosing.WEBP
+Ch2_TS_Data_Processing.html
+1510.03924v1.pdf
+Ch2_TS_Data_Processing.log
+Ch2_2TS_Data_Processing.log
