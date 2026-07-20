@@ -67,6 +67,7 @@ df_filter <- df %>%
 Now, let's explore the dataset. Before we look out for any missing data, first we need to ensure that `R` recognises our **time** variable and assigns the correct data type. Now, look at the time variable in the dataset. Is it having the correct data type? Which function from **lubridate** is going to be applicable here?
 ```{r echo=FALSE}
 df_filter$DateTime <- dmy_hms(df_filter$DateTime)
+class(df_filter$DateTime)
 ```
 
 Once, we have parsed our time variable correctly, we can extract more information. Let's us extract the `date`, `hour` and `time`.
@@ -99,6 +100,9 @@ df_filter_na$PM2.5_missing[sample(1:(nrow(df_filter_na) - 1), size = 500)] <- NA
 
 df_filter_na %>% 
   {ggplot() +
+      geom_line(data = ., 
+                aes(x = date, y = PM2.5), 
+                colour = "green", linewidth = 1.2)+
       geom_line(data = ., 
                 aes(x = date, y = PM2.5_missing), 
                 colour = "steelblue2", linewidth = 1.2)+

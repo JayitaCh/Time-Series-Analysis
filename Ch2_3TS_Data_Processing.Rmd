@@ -1,0 +1,605 @@
+---
+title: "Handling Missing Values (Long Gaps)"
+author: "Jayita Chakraborty"
+date: ""
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+require(tidyverse)
+require(readr)
+require(tsibble)
+require(imputeTS)
+require(fs)
+require(arrow)
+```
+
+```{r}
+files <- list.files("../archive/hhblock_parquet", pattern = "*.parquet$",
+                     full.names = TRUE)
+
+block_df <- open_dataset(files[1]) %>% collect()
+```
+
+
+```{r}
+compact_to_expanded <- function(df,
+                                timeseries_col,
+                                static_cols,
+                                time_varying_cols,
+                                ts_identifier) {
+
+  preprocess_expanded <- function(x) {
+    
+    # using regular expression to add space between the numeric part 
+    # and text part of the variable
+    # x$frequency <- gsub("([0-9]+)([a-zA-Z]+)", "\\1 \\2",  x$frequency)
+    
+    # Create timestamp sequence
+    dr <- seq(
+      from = x$start_timestamp,
+      by = x$frequency,
+      length.out = x$series_length
+    )
+
+    # Create expanded dataframe
+    expanded <- tibble(timestamp = dr)
+
+    # Add identifier
+    expanded[[ts_identifier]] <- x[[ts_identifier]]
+
+    # Add time series column
+    expanded[[timeseries_col]] <- x[[timeseries_col]][[1]]
+
+    # Add static columns (repeat over timestamps)
+    for (col in static_cols) {
+      expanded[[col]] <- x[[col]]
+    }
+
+    # Add time-varying columns
+    for (col in time_varying_cols) {
+      expanded[[col]] <- x[[col]][[1]]
+    }
+
+    return(expanded)
+  }
+
+  # Apply to each compact series
+  all_series <- map(
+                seq_len(nrow(df)),
+                ~ preprocess_expanded(df[.x, ])
+                )
+
+  # Combine into one dataframe
+  return(bind_rows(all_series))
+}
+```
+
+
+```{r}
+#Converting to expanded form
+block_7_df <- block_df %>%
+  filter(file=="block_7")
+
+# Remove the combined variable from the system if you're not using it later
+rm(block_df)
+gc()
+
+exp_block_df <- compact_to_expanded(block_7_df, timeseries_col = 'energy_consumption', static_cols = c("frequency", "series_length", "stdorToU", "Acorn", "Acorn_grouped", "file"), time_varying_cols = c('holidays', 'visibility', 'windBearing', 'temperature', 'dewPoint', 'pressure', 'apparentTemperature', 'windSpeed', 'precipType', 'icon', 'humidity', 'summary'),ts_identifier = "LCLid")
+```
+```{r}
+head(block_7_df,5)
+```
+
+
+```{r}
+head(exp_block_df,5)
+```
+```{r}
+rm(block_7_df)
+gc()
+
+chr_cols <- c("precipType","icon","summary")
+exp_block_df[chr_cols] <- map_dfc(exp_block_df[chr_cols], ~ zoo::na.locf(.x, na.rm = FALSE))
+
+head(exp_block_df,5)
+```
+## Missing Data and Advanced Imputation Techniques
+```{r}
+summary(exp_block_df)
+```
+
+```{r}
+t_df <- exp_block_df %>%
+  pivot_wider(
+    id_cols = timestamp,
+    names_from = LCLid,
+    values_from = energy_consumption
+  )
+```
+
+It can be challenging to look at tables for every variable and instead may be more efficient to view missing data in a graphical format to help narrow in on patterns or unique variables. The {naniar} package is very useful in exploring missing data visually. We can use the `vis_miss()` function available in both {visdat} and {naniar} packages to view the amount of missing data by variable.
+
+```{r}
+require(naniar)
+
+plot_df_daily <-
+  t_df %>%
+  mutate(day = floor_date(timestamp, "day")) %>%
+  group_by(day) %>%
+  summarise(across(everything(), ~ all(is.na(.)))) %>%
+  mutate(across(-day, ~ ifelse(.x, NA, 1)))%>%
+  select(-day)
+
+vis_miss(plot_df_daily[,2:ncol(plot_df_daily)],cluster = TRUE,sort_miss = TRUE)+
+  labs(
+    title = "Missingness of energy consumption values",
+    subtitle = "Daily Missing values per household"
+  ) +
+  theme(
+    plot.margin = margin(t = 5, r = 5, b = 5, l = 5),
+    axis.text.x = element_text(angle=90,
+                               vjust=0.5,
+                               margin = margin(b = 0.1))
+  )
+```
+This plot provides a specific visualiation of the amount of missing data, showing in black the location of missing values, and also providing information on the overall percentage of missing values overall (in the legend), and in each variable.
+
+## Exploring patterns in missingness
+
+An upset plot from the **`UpSetR`** package can be used to visualise the patterns of missingness, or rather the combinations of missingness across cases. To see combinations of missingness and intersections of missingness amongst variables, use the `gg_miss_upset` function:
+
+```{r}
+gg_miss_upset(plot_df_daily,nsets=2)
+```
+This tells us:
+
+  - Household ID **MAC002155** has more missing values compared to **MAC003022**.
+  - There are _601_ cases where both the households have missing values together.
+
+The default option of `gg_miss_upset` is taken from `UpSetR::upset` - which is to use up to 5 sets and up to 40 interactions. Here, setting `nsets = 5` means to look at 5 variables and their combinations. The number of combinations or rather intersections is controlled by `nintersects`. You could, for example look at all of the number of missing variables using `n_var_miss`:
+
+```{r}
+# how many missings?
+miss_var<- n_var_miss(t_df)
+print(miss_var)
+
+gg_miss_upset(t_df, nsets = miss_var)
+```
+If there are 40 intersections, there will be up to 40 combinations of variables explored. The number of sets and intersections can be changed by passing arguments `nsets = 10` to look at 10 sets of variables, and `nintersects = 50` to look at 50 intersections.
+```{r}
+gg_miss_upset(t_df, nsets = 10, nintersects = 50)
+```
+
+```{r}
+plot_df_monthly <-
+  t_df %>%
+  mutate(month = ceiling_date(timestamp, "month")- days(1)) %>%
+  group_by(month) %>%
+  summarise(across(everything(), ~ all(is.na(.)))) %>%
+  mutate(across(-month, ~ ifelse(.x, NA, 1))) %>%
+  select(-timestamp) %>%
+  mutate(month = as.Date(month))
+
+gg_miss_fct(plot_df_monthly, month) +
+  scale_x_date(
+    date_labels = "%d-%b-%Y",
+    breaks = plot_df_monthly$month
+  ) +
+  coord_flip() +
+  labs(
+    title = "Missingness of energy consumption values for each month",
+    subtitle = "Missing values % per household",
+    y="",
+    x= "Household ID"
+  ) +
+  theme(
+    axis.text.x = element_text(angle=90,vjust=0.5),
+    axis.text.y = element_text(size = 9),
+    panel.grid.major = element_line(color = "gray90", linewidth = 0.3),
+    plot.margin = margin(t = 1, r = 5, b = 1, l = 5)
+  )
+```
+```{r}
+# Taking a single time series from the block
+ts_df <- exp_block_df %>%
+  filter(LCLid=="MAC000193")
+```
+
+```{r}
+ts_df %>% 
+  {ggplot() +
+      geom_line(data = ., 
+                aes(x = timestamp, y = energy_consumption), 
+                colour = "steelblue2", linewidth = 0.5)+
+      geom_vline(data = filter(., is.na(energy_consumption)), aes(xintercept = timestamp),
+                 colour = "indianred", alpha = 0.9) +
+      scale_x_date(expand = c(0, 0),breaks = scales::pretty_breaks(n=15)) +
+      scale_y_continuous(expand = c(0, 0)) +
+      labs(title = "Location of missing values",
+           subtitle = "Time series with highlighted missing regions",
+           y = "Energy Consumption values",
+           x = "") +
+      theme_classic()}
+```
+```{r}
+ggplot_na_gapsize(ts_df$energy_consumption, ranked_by = "total",
+                  theme = ggplot2::theme_classic())
+```
+## Repeating Patterns
+### Last Day
+```{r}
+window_start <- as.Date("2012-10-17")
+window_end   <- as.Date("2012-10-19")
+
+ts_df <- ts_df %>%
+  mutate(
+    energy_consumption_missing = energy_consumption,
+    energy_consumption_missing = if_else(
+      as.Date(timestamp) >= window_start &
+      as.Date(timestamp) <= window_end,
+      NA_real_,
+      energy_consumption_missing
+    )
+  )
+
+# Creating for visualisation purpose
+vis_window_start <- window_start - days(2)
+vis_window_end   <- window_end + days(2)
+
+vis_df <- ts_df %>%
+  filter(
+    as.Date(timestamp) >= vis_window_start &
+    as.Date(timestamp) <= vis_window_end
+  )
+```
+
+```{r}
+ggplot(vis_df, aes(x = timestamp)) +
+  geom_line(
+    aes(y = energy_consumption, color = "Original"),
+    linewidth = 1
+  ) +
+  geom_line(
+    aes(y = energy_consumption_missing, color = "With missing values"),
+    linewidth = 1
+  ) +
+  scale_color_manual(
+    values = c(
+      "Original" = "#087E8B",
+      "With missing values" = "#0B3954"
+    ),
+    name = ""
+  ) +
+  labs(
+    x = "",
+    y = "Energy consumption",
+    title = "Artificially introduced missing values",
+    subtitle = "Comparison between original and modified time series"
+  ) +
+  theme_minimal()
+```
+```{r}
+null_mask <- is.na(ts_df$energy_consumption_missing)
+```
+
+```{r}
+ts_df_tbl <- ts_df %>%
+  as_tsibble(index = timestamp) %>%
+  mutate(
+    prev_day = lag(energy_consumption, 48)
+  ) %>%
+  mutate(
+    prev_day_imputed = if_else(
+      is.na(energy_consumption_missing),
+      prev_day,
+      energy_consumption_missing
+    )
+  )
+
+mae <- ts_df_tbl %>%
+  filter(
+    timestamp >= as.POSIXct(window_start),
+    timestamp <= as.POSIXct(window_end)
+  ) %>%
+  summarise(
+    MAE = mean(
+      abs(prev_day_imputed - energy_consumption),
+      na.rm = TRUE
+    )
+  )
+mae_lastday <- mean(mae$MAE,na.rm=TRUE)
+```
+
+```{r}
+plot_df <- ts_df_tbl %>%
+  filter(
+    timestamp >= as.POSIXct(window_start),
+    timestamp <= as.POSIXct(window_end)
+  ) %>%
+  select(timestamp, energy_consumption, prev_day_imputed) %>%
+  pivot_longer(
+    cols = c(energy_consumption, prev_day_imputed),
+    names_to = "series",
+    values_to = "value"
+  )
+```
+
+```{r}
+ggplot(plot_df, aes(x = timestamp)) +
+  geom_line(aes(y = value, color = series),linewidth = 1) +
+  scale_color_manual(
+    values = c(
+      "energy_consumption" = "firebrick",
+      "prev_day_imputed" = "tan1"
+    ),
+    labels = c(
+      "energy_consumption" = "Original",
+      "prev_day_imputed" = "Previous day imputation"
+    ),
+    name = ""
+  ) +
+  labs(
+    title = "Imputing with Previous Day",
+    subtitle = paste0("Mean Absolute Error (MAE): ", round(mae_lastday, 3)),
+    x = "Date",
+    y = "Energy consumption"
+  ) +
+  theme_minimal()
+```
+### Hourly Profile
+
+```{r}
+# Create a column with the hour from timestamp
+ts_df <- ts_df %>%
+  mutate(hour = hour(timestamp))
+
+# Calculate hourly average consumption
+hourly_profile <- ts_df %>%
+  group_by(hour) %>%
+  summarise(
+    hourly_profile = mean(energy_consumption, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Merge the hourly profile dataframe to ts dataframe
+ts_df <- ts_df %>%
+  left_join(hourly_profile, by = "hour")
+
+ts_df <- ts_df %>%
+  mutate(
+    hourly_profile_imputed = energy_consumption_missing
+  )
+
+ts_df$hourly_profile_imputed[null_mask] <- ts_df$hourly_profile[null_mask]
+
+# Calculate MAE over the missing window
+mae_hourly <- mean(
+  abs(
+    ts_df$hourly_profile_imputed[null_mask] -
+    ts_df$energy_consumption[null_mask]
+  ),
+  na.rm = TRUE
+)
+```
+
+```{r}
+plot_df <- ts_df %>%
+  filter(timestamp>= as.POSIXct(vis_window_start),
+         timestamp<= as.POSIXct(vis_window_end)) %>%
+  select(timestamp, energy_consumption, hourly_profile_imputed) %>%
+  pivot_longer(
+    cols = c(hourly_profile_imputed,energy_consumption),
+    names_to = "series",
+    values_to = "value"
+  )
+
+```
+
+```{r}
+ggplot(plot_df, aes(x = timestamp)) +
+  geom_line(aes(y = value, color = series),linewidth = 1.2) +
+  scale_color_manual(
+    values = c(
+      "hourly_profile_imputed" = "navy",
+      "energy_consumption" = "firebrick"
+    ),
+    labels = c(
+      "hourly_profile_imputed" = "Hourly Profile Imputed",
+      "energy_consumption" = "Original"
+    ),
+    name = ""
+  ) +
+  labs(
+    title = "Imputing with Hourly Profile",
+    subtitle = paste0("Mean Absolute Error (MAE): ", round(mae_hourly, 3)),
+    x = "Date",
+    y = "Energy consumption"
+  ) +
+  theme_classic()+
+  theme(
+    legend.position = "inside",
+    legend.position.inside = c(0.9,0.95),
+    legend.background = element_blank(),
+    panel.grid.major = element_line(colour = "grey70")
+    
+  )
+```
+### Weekday-Hourly Profile
+```{r}
+# Create weekday and hour columns
+ts_df <- ts_df %>%
+  mutate(
+    weekday = wday(timestamp, week_start = 1)
+  )
+# Calculate weekday-hour average consumption
+day_hourly_profile <- ts_df %>%
+  group_by(weekday, hour) %>%
+  summarise(
+    wkday_hourly_profile = mean(energy_consumption, na.rm = TRUE),
+    .groups = "drop"
+  )
+# Merge the weekday-hour profile back to the original data
+ts_df <- ts_df %>%
+  left_join(day_hourly_profile, by = c("weekday", "hour"))
+
+ts_df <- ts_df %>%
+  mutate(
+    wkday_hourly_profile_imputed = energy_consumption_missing
+  )
+
+ts_df$wkday_hourly_profile_imputed[null_mask] <- ts_df$wkday_hourly_profile[null_mask]
+
+# Calculate MAE over the missing window
+mae_wk_hour <- mean(
+  abs(
+    ts_df$wkday_hourly_profile_imputed[null_mask] -
+    ts_df$energy_consumption[null_mask]
+  ),
+  na.rm = TRUE
+)
+```
+
+```{r}
+plot_df <- ts_df %>%
+  filter(timestamp>= as.POSIXct(vis_window_start),
+         timestamp<= as.POSIXct(vis_window_end)) %>%
+  select(timestamp, energy_consumption, wkday_hourly_profile_imputed) %>%
+  pivot_longer(
+    cols = c(wkday_hourly_profile_imputed,energy_consumption),
+    names_to = "series",
+    values_to = "value"
+  )
+
+```
+
+
+```{r}
+ggplot(plot_df, aes(x = timestamp)) +
+  geom_line(aes(y = value, color = series),linewidth = 1.2) +
+  scale_color_manual(
+    values = c(
+      "wkday_hourly_profile_imputed" = "navy",
+      "energy_consumption" = "firebrick"
+    ),
+    labels = c(
+      "wkday_hourly_profile_imputed" = "Weekday-Hourly Profile Imputed",
+      "energy_consumption" = "Original"
+    ),
+    name = ""
+  ) +
+  labs(
+    title = "Imputing with Week Day-Hourly Profile",
+    subtitle = paste0("Mean Absolute Error (MAE): ", round(mae_wk_hour, 3)),
+    x = "Date",
+    y = "Energy consumption"
+  ) +
+  theme_classic()+
+  theme(
+    legend.position = "inside",
+    legend.position.inside = c(0.85,0.95),
+    legend.background = element_blank(),
+    panel.grid.major = element_line(colour = "grey70")
+  )
+```
+
+### Seasonal Interpolation
+
+```{r}
+source("../Extra_code/solver.R")
+source("../Extra_code/interpolation.R")
+
+
+# Seasonal interpolation using 48*7 as the seasonal period.
+# seasonal period is the period after which you expect the pattern to repeat
+imputer_wkhr <- SeasonalInterpolation$new(seasonal_period = 48*7,
+                       decomposition_strategy = "additive",
+                       interpolation_strategy = "polynomial",
+                       interpolation_args = list(order=3))
+seas_interp_weekday_half_hour <- imputer_wkhr$fit_transform(matrix(ts_df$energy_consumption_missing))
+
+ts_df$seas_interp_weekday_half_hour_imputed <- seas_interp_weekday_half_hour[,1]
+```
+
+
+```{r}
+mae_weekday_half_hour <- mean(
+  abs(
+    ts_df$seas_interp_weekday_half_hour_imputed[null_mask] -
+    ts_df$energy_consumption[null_mask]
+  ),
+  na.rm = TRUE
+)
+```
+
+```{r}
+imputer_hfhr <- SeasonalInterpolation$new(seasonal_period = 48,
+                       decomposition_strategy = "additive",
+                       interpolation_strategy = "polynomial",
+                       interpolation_args = list(order=5))
+seas_interp_half_hour <- imputer_hfhr$fit_transform(matrix(ts_df$energy_consumption_missing))
+
+ts_df$seas_interp_half_hour_imputed <- seas_interp_half_hour[,1]
+```
+
+```{r}
+mae_half_hour <- mean(
+  abs(
+    ts_df$seas_interp_half_hour_imputed[null_mask] -
+    ts_df$energy_consumption[null_mask]
+  ),
+  na.rm = TRUE
+)
+```
+
+
+```{r}
+plot_df <- ts_df %>%
+  filter(timestamp>= as.POSIXct(vis_window_start),
+         timestamp<= as.POSIXct(vis_window_end)) %>%
+  select(timestamp, energy_consumption, seas_interp_weekday_half_hour_imputed,
+         seas_interp_half_hour_imputed) %>%
+  pivot_longer(
+    cols = c(seas_interp_weekday_half_hour_imputed,seas_interp_half_hour_imputed,
+             energy_consumption),
+    names_to = "series",
+    values_to = "value"
+  )
+```
+
+```{r}
+ggplot(plot_df, aes(x = timestamp)) +
+  geom_line(aes(y = value, color = series),linewidth = 1.2) +
+  scale_color_manual(
+    values = c(
+      "seas_interp_weekday_half_hour_imputed" = "navy",
+      "seas_interp_half_hour_imputed" = "royalblue",
+      "energy_consumption" = "firebrick"
+    ),
+    labels = c(
+      "seas_interp_weekday_half_hour_imputed" = "Week Day-Half Hourly Profile Imputed",
+      "seas_interp_half_hour_imputed" = "Half Hourly Profile Imputed",
+      "energy_consumption" = "Original"
+    ),
+    name = ""
+  ) +
+  labs(
+    title = "Imputing with Seasonal Interpolation",
+    subtitle = paste0("MAE Half Hourly : ", round(mae_half_hour, 3)," | MAE Weekday-Half Hourly : ",round(mae_weekday_half_hour, 3)),
+    x = "Date",
+    y = "Energy consumption"
+  ) +
+  theme_classic()+
+  theme(
+    legend.position = "inside",
+    legend.position.inside = c(0.8,0.92),
+    legend.background = element_blank(),
+    panel.grid.major = element_line(colour = "grey70")
+    
+  )
+```
+

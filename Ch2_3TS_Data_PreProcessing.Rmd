@@ -1,0 +1,301 @@
+---
+title: "Handling Missing Data (Long Gaps)"
+author: "Jayita Chakraborty (PhD)"
+date: ""
+output: 
+  pdf_document:
+    latex_engine: xelatex
+geometry: "left=2cm,right=2cm,top=2cm,bottom=2cm"
+header-includes:
+  - \usepackage{xeCJK}
+  - \usepackage{booktabs}
+colorlinks: true
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+library(formatR)
+options(width = 60)
+knitr::opts_chunk$set(echo = TRUE,tidy.opts = list(width.cutoff = 60), tidy = TRUE)
+```
+
+
+## Joining Information to data
+Let's use **London Smart Meters** dataset from Kaggle for the current exercise. The source of the data is from London Data Store and Jean-Michel D. has augumented the dataset with a few more details and packaged it as a Kaggle Dataset.
+
+**About the Dataset**
+London Data Store, free and open data-sharing portal, provided this dataset, which was collected and enriched by Jean-Michel D and uploaded on [Kaggle](https://www.kaggle.com/jeanmidev/smart-meters-in-london). The dataset has energy consumption readings for a sample of 5,567 London Households that took part in the UK Power Networks led Low Carbon London project between November 2011 and February 2014. Readings were taken at half hourly intervals. Some metadata about the households are also available as part of the dataset.
+
+```{r message=FALSE, warning=FALSE}
+require(readr)
+require(dplyr)
+require(tidyverse)
+require(fs)
+require(tsibble)
+require(imputeTS)
+require(arrow)
+```
+
+
+
+```{r}
+source_data <- path("../archive")
+block_data_path <- path(source_data, "hhblock_dataset", "hhblock_dataset")
+```
+
+```{r}
+# Read the CSV without parsing dates automatically (like parse_dates=False)
+block_1 <- read_csv(path(block_data_path, "block_0.csv"),col_types = cols(day = col_character()))
+str(block_1)
+```
+
+```{r}
+block_1$day <- date(block_1$day)
+block_1_tibble <-  as_tsibble(block_1,key=LCLid,index = day)
+```
+
+```{r}
+block_1_tibble %>%
+  group_by_key() %>%
+  summarise(day = max(day)) %>%
+  as_tibble() %>%
+  slice_sample(n=5)
+```
+
+```{r}
+# Get all block file paths
+block_files <- dir_ls(block_data_path, glob = "*.csv")
+
+# Read and bind all 111 files together
+all_blocks <- map_dfr(
+  block_files,
+  ~ read_csv(.x, col_types = cols(day = col_character()))
+)
+
+# Parse the date column once, across the combined data
+all_blocks$day <- date(all_blocks$day)
+
+# Convert the full combined dataset to a single tsibble
+all_blocks_tsbl <- as_tsibble(all_blocks, key = LCLid, index = day)
+
+# Maximum date across ALL blocks/households
+print(paste("Max Date across all blocks: ", max(all_blocks_tsbl$day)))
+print(paste("Max Date across all blocks: ", min(all_blocks_tsbl$day)))
+```
+
+
+```{r}
+head(all_blocks_tsbl)
+```
+
+
+```{r}
+all_blocks_tsbl_long <- all_blocks_tsbl %>%
+  pivot_longer(
+    cols = starts_with("hh_"),
+    names_to = "hour_block",
+    values_to = "energy_consumption"
+  )
+
+all_blocks_tsbl_long <- all_blocks_tsbl_long %>%
+  mutate(
+    hour_num = as.integer(gsub("hh_","",hour_block))
+  )
+
+head(all_blocks_tsbl_long)
+```
+
+
+```{r}
+all_blocks_long_tsbl <- all_blocks_tsbl_long %>%
+  mutate(timestamp = as_datetime(day) + minutes(30 * hour_num)) %>%
+  as_tsibble(key = LCLid, index = timestamp)
+
+# global max across the whole block (or dataset)
+max_date <- max(all_blocks_long_tsbl$timestamp)
+
+all_blocks_long_tsbl <- all_blocks_long_tsbl %>%
+  fill_gaps(.end = max_date)
+
+all_blocks_compact <-all_blocks_long_tsbl %>%
+  as_tibble() %>%
+  group_by(LCLid) %>%
+  summarise(
+    start_timestamp = min(timestamp),
+    energy_consumption = list(energy_consumption),
+    series_length = n(),
+    .groups = "drop"
+  ) %>%
+  mutate(frequency = "30min") %>%
+  select(LCLid, start_timestamp, frequency, energy_consumption, series_length)
+
+head(all_blocks_compact)
+```
+
+
+```{r}
+# Removing all other unused variables from memory
+rm(list = c("all_blocks","all_blocks_long_tsbl","all_blocks_tsbl","all_blocks_tsbl_long","block_1","block_1_tibble"))
+gc()
+
+
+# Per-column memory usage (in bytes)
+col_sizes <- data.frame(map_dbl(all_blocks_compact, object.size))
+names(col_sizes) <- "Object_size"
+
+print(col_sizes)
+
+# Total size in MB
+cat("Total:", sum(col_sizes) / 1024^2, "MB\n")
+```
+## Merging additional information
+### Household information
+```{r}
+household_info <- read_csv(path(source_data,"informations_households.csv"))
+head(household_info)
+```
+
+
+```{r}
+hourlyblock_df <- all_blocks_compact %>%
+  left_join(household_info,by = "LCLid")
+
+head(hourlyblock_df)
+```
+
+
+```{r}
+# remove all_blocks_compact
+rm(all_blocks_compact)
+gc()
+```
+
+### Add Bank Holidays
+```{r}
+bank_holidays <- read_csv(path(source_data,"uk_bank_holidays.csv"), col_types = cols('Bank holidays'=col_character()))
+bank_holidays$`Bank holidays`<- as.Date(bank_holidays$`Bank holidays`)
+
+head(bank_holidays)
+```
+
+```{r}
+bank_holidays_full <- bank_holidays %>%
+  rename(date = `Bank holidays`) %>%
+  as_tsibble(index = date) %>%
+  fill_gaps(.full = TRUE) %>%
+  as_tibble() %>%
+  mutate(Type = replace_na(Type, "NO_HOLIDAY")) %>%
+  reframe(time = as_datetime(date) + minutes(30 * (0:47)), Type=Type, .by = date) %>%
+  select(time, Type) %>%
+  as_tsibble(index=time)
+
+head(bank_holidays_full)
+```
+### Add Weather
+
+```{r}
+weather_hourly <- read_csv(path(source_data,"weather_hourly_darksky.csv"), col_types = cols(time=col_character()))
+weather_hourly$time <- as_datetime(weather_hourly$time)
+```
+
+```{r}
+full_time <- tibble(time = seq(min(weather_hourly$time), max(weather_hourly$time), by = "30 min"))
+
+weather_hourly_full <- full_time %>%
+  left_join(weather_hourly %>%  as_tsibble(index=time),by="time") %>%
+  na_locf()
+
+head(weather_hourly_full)
+```
+
+
+```{r}
+map_weather_holidays <- function(row, bank_holidays, weather_hourly) {
+
+  # Create regular timestamp sequence
+      # using regular expression to add space between the numeric part 
+    # and text part of the variable
+  row$frequency <- gsub("([0-9]+)([a-zA-Z]+)","\\1 \\2",row$frequency)
+  date_range <- seq(
+    from = row$start_timestamp,
+    by = row$frequency,
+    length.out = row$series_length
+  )
+
+  # Empty tsibble
+  std_tbl <- tibble(time = date_range) %>%
+    as_tsibble(index = time)
+
+  # Join holidays
+  holidays <- std_tbl %>%
+    left_join(bank_holidays, by = "time") %>%
+    mutate(Type = if_else(is.na(Type), "NO_HOLIDAY", Type))
+
+  # Join weather
+  weather <- std_tbl %>%
+    left_join(weather_hourly, by = "time")
+
+  # Assertion
+  stopifnot(nrow(holidays) == row$series_length)
+  stopifnot(nrow(weather) == row$series_length)
+
+  # Store holidays as vector
+  row$holidays <- list(holidays$Type)
+
+  # Store each weather variable as a vector
+  weather_cols <- setdiff(names(weather), "timestamp")
+  
+  for (col in weather_cols) {
+    row[[col]] <- list(weather[[col]])
+  }
+
+  return(row)
+}
+```
+
+
+```{r}
+hourlyblock_df_compact <- lapply(seq_len(nrow(hourlyblock_df)), function(i) {
+  print(paste0("Processing row ",i))
+  map_weather_holidays(
+    hourlyblock_df[i, ],
+    bank_holidays_full,
+    weather_hourly_full
+  )
+})
+```
+
+
+```{r}
+rm(list=c("bank_holidays_full","household_info","weather_hourly","weather_hourly_full","full_time"))
+gc()
+
+hhblock_tbl <- map_dfr(hourlyblock_df_compact,as_tibble)
+
+parquet_dir <- path(source_data, "hhblock_parquet")
+parquet_file <- path(
+    parquet_dir,
+    paste0("hourlyblock_chunks_merged", ".parquet")
+  )
+write_parquet(hhblock_tbl, parquet_file)
+
+```
+
+
+
+
+```{r}
+dir.create(path(source_data,"hourlyblock_chunks"), showWarnings = FALSE)
+
+# Split into 8 approximately equal chunks
+chunks <- split(
+  hourlyblock_df_compact,
+  cut(seq_along(hourlyblock_df_compact), breaks = 8, labels = FALSE)
+)
+
+# Save each chunk for saving them to .rds format
+for (i in seq_along(chunks)) {
+  saveRDS(chunks[[i]], file = path(path(source_data,"hourlyblock_chunks"), sprintf("hourlyblock_df_compact_%d.rds", i)))
+}
+```
+
