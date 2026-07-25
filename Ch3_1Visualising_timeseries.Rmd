@@ -1,0 +1,306 @@
+---
+title: "Visualising Time Series"
+author: "Jayita Chakraborty (PhD)"
+date: ""
+output: 
+  pdf_document:
+    latex_engine: xelatex
+geometry: "left=2cm,right=2cm,top=2cm,bottom=2cm"
+header-includes:
+  - \usepackage{xeCJK}
+  - \usepackage{booktabs}
+colorlinks: true
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,tidy.opts = list(width.cutoff = 60), tidy = TRUE)
+```
+
+
+```{r include=FALSE,message=FALSE,warning=FALSE}
+require(tidyverse)
+require(readr)
+require(tsibble)
+require(imputeTS)
+require(fs)
+require(arrow)
+require(viridis)
+require(xts)
+```
+
+
+
+```{r include=FALSE,message=FALSE,warning=FALSE}
+source("../Extra_code/compact_expanded.R")
+
+files <- list.files("../archive/hhblock_parquet", pattern = "*.parquet$",
+                     full.names = TRUE)
+
+block_df <- open_dataset(files[1]) %>% collect()
+```
+
+
+```{r include=FALSE,message=FALSE,warning=FALSE}
+exp_block_df <- compact_to_expanded(block_df, timeseries_col = 'energy_consumption', static_cols = c("frequency", "series_length", "stdorToU", "Acorn", "Acorn_grouped", "file"), time_varying_cols = c('holidays', 'visibility', 'windBearing', 'temperature', 'dewPoint', 'pressure', 'apparentTemperature', 'windSpeed', 'precipType', 'icon', 'humidity', 'summary'),ts_identifier = "LCLid")
+
+rm(block_df)
+gc()
+```
+## Time Series Visualisation
+
+Plotting time series is an important part of the analysis because it permits visualizing and **exploring the data**, both from a **univariate** perspective (focusing on the characteristics of a single time series) and from a **multivariate** perspective (focusing on the characteristics of many time series, and on the relations between them). To visualize and explore the relations between time series, we’ll learn to plot a single time series as well as many different time series at once.
+
+**1. Calendar Heatmaps** :
+
+Nowadays you can find calendar heatmaps on every GitHub profile. The color of the tiles in the chart are representative of the number of contributions made in Github. The _calendar heatmap_ provides a visually appealing way to visualize over days in a calendar-like view, making it easy to identify daily patterns or anomalies. Another great example can be found on the article by [Wall Street Journal](http://graphics.wsj.com/infectious-diseases-and-vaccines/), which shows the number of infected people measured over 70 years across all 50 states in the US. Over here, the calendar heatmap makes it easy to identify yearly patterns in the number of infected people for various diseases. Although there are different packages available, we will use `ggplot` for our calendar heatmap. It gives more flexibility over other packages.
+```{r}
+target_blocks <- paste0("block_",0:9)
+
+block_df_0_9 <- exp_block_df %>%
+  filter(file %in% target_blocks)
+
+rm(exp_block_df)
+gc()
+
+block_df_0_9 <- block_df_0_9 %>% 
+  mutate(Year = year(timestamp),
+         Month = month(timestamp, label = TRUE, abbr = TRUE),
+         Weekday = wday(timestamp, label = TRUE, abbr = TRUE, week_start = 1),
+         OB_Date = date(timestamp),
+         MonthWeek = ceiling(day(timestamp) / 7))
+```
+
+As our data has many observations, we need to conduct some wrangling before we can visualise the _calendar heatmap_. It must be noted that we don't have same number of household counts for each of our date in the dataset. Therefore, we will need to look at the **Energy Consumption per household** if we want to obtain a measure for central tendency.
+
+```{r}
+daily_summary <- block_df_0_9 %>%
+  group_by(OB_Date, Year, Month, Weekday, MonthWeek) %>%
+  summarise(household_count = n_distinct(LCLid),
+            tot_energy_consumption = sum(energy_consumption, na.rm = TRUE),
+            .groups = "drop") %>%
+  mutate(avg_energy_consumption = tot_energy_consumption/household_count)
+```
+
+```{r, fig.width=10, fig.height=6}
+theme_set(theme_bw())
+
+ggplot(daily_summary,aes(MonthWeek,Weekday,fill = avg_energy_consumption)) +
+  geom_tile(colour="white") +
+  facet_grid(Year~Month,space = "free_x", scales = "free_x") +
+  scale_fill_viridis(option = "inferno") +
+  scale_y_discrete(limits = rev) +
+  labs(x="Week of Month",y="",title = "Energy Consumption across households in UK",
+       subtitle = "Calendar Visualisation",fill="Energy Consumption \nper household")
+```
+```{r message=FALSE,warning=FALSE}
+pacman::p_load(TSstudio,dygraphs,janitor,showtext,MetBrewer,scico,ggtext,patchwork,gghighlight)
+```
+
+```{r}
+#### MISC ####
+font <- "Gudea"
+font_add_google(family=font, font, db_cache = TRUE)
+fa_path <- systemfonts::font_info(family = "Font Awesome 6 Brands")[["path"]]
+font_add(family = "fa-brands", regular = fa_path)
+theme_set(theme_minimal(base_family = font, base_size = 10))
+bg <- "#F4F5F2"
+txt_col <- "black"
+showtext_auto(enable = TRUE)
+
+caption_text  <- str_glue("**Topic:** Time Series Visualisation<br>","**Data:** London Datastore, 2015")
+```
+
+We will further reduce our dataset to store only the **Energy Consumption** and the **Temperature**.
+```{r}
+block_df_0_9_red <- block_df_0_9 %>%
+  select(timestamp,LCLid,file,energy_consumption,temperature)
+```
+
+**2. Line Charts** :
+
+Line plots are the most common visualisation tool for time-series data. The `geom_line` method of `{ggplot}` are most commonly used function to visualise the time series data.
+```{r}
+block_df_0_9_energy <- block_df_0_9_red %>%
+  as_tsibble(key=LCLid,index = timestamp) %>%
+  select(timestamp,LCLid,energy_consumption) %>%
+  pivot_wider(id_cols = timestamp,names_from = LCLid,values_from = energy_consumption) %>%
+  mutate(MAC_energy_mean = rowMeans(across(2:499),na.rm = TRUE)) %>%
+  as.xts()
+```
+
+However, we will be using a package designed specifically for time-series visualisation. The `dygraphs` package is an R interface to the dygraphs JavaScript charting library. It provides rich facilities for charting time-series data in R.
+
+```{r, fig.width=10, fig.height=6}
+require(dygraphs)
+
+dygraph(block_df_0_9_energy[,c(2:5,ncol(block_df_0_9_energy))],
+                  main = "Energy Consumption",
+                  ylab = "") %>%
+    dyHighlight(highlightSeriesBackgroundAlpha = 0.2,
+                highlightSeriesOpts = list(strokeWidth = 1.2)) %>%
+    dySeries("MAC_energy_mean", label = "Mean", color = "firebrick", strokeWidth = 1.5) %>%
+    dySeries("MAC000005", label = "MAC000005", color = "rgba(150,150,150,0.3)") %>%
+    dySeries("MAC000017", label = "MAC000017",color = "rgba(150,150,150,0.3)") %>%
+    dySeries("MAC000026", label = "MAC000026",color = "rgba(150,150,150,0.3)") %>%
+    dySeries("MAC000030", label = "MAC000030",color = "rgba(150,150,150,0.3)") %>%
+    dyRangeSelector() %>%
+    dyOptions(useDataTimezone = TRUE)
+```
+```{r}
+block_df_0_9_temp <- block_df_0_9_red %>%
+  as_tsibble(index = timestamp,key = LCLid) %>%
+  distinct(timestamp, temperature) %>%
+  arrange(timestamp)
+
+block_df_0_9_temp_xts <- xts(block_df_0_9_temp$temperature, order.by = block_df_0_9_temp$timestamp)
+colnames(block_df_0_9_temp_xts) <- "Temperature"
+```
+
+```{r message=FALSE,warning=FALSE}
+# hourly_energy <- period.apply(block_df_0_9_energy$MAC_energy_mean,
+#                               endpoints(block_df_0_9_energy$MAC_energy_mean, on = "hours", k = 1), sum, na.rm = TRUE)
+daily_energy <- apply.daily(block_df_0_9_energy$MAC_energy_mean,sum, na.rm = TRUE)
+colnames(daily_energy) <- "daily_energy"
+# index(hourly_energy) <- floor_date(index(hourly_energy), "hour")
+
+daily_temp <- apply.daily(block_df_0_9_temp_xts$Temperature,mean, na.rm = TRUE)
+colnames(daily_temp) <- "temperature"
+
+temp_energy_comnined <- merge(daily_energy,daily_temp)
+```
+
+```{r, fig.width=10, fig.height=6}
+dygraph(temp_energy_comnined,
+                  main = "Mean Energy Consumption Vs Temperature",
+                  ylab = "")%>%
+    dySeries("daily_energy", label = "Avg. Daily Energy Consumption") %>%
+    dySeries("temperature", label = "Temperature") %>%
+    dyRangeSelector() %>%
+    dyOptions(useDataTimezone = TRUE)
+```
+
+
+
+```{r, fig.width=10, fig.height=6}
+# Extract time-of-day (ignoring the actual date) and average per household per half-hour slot
+profile_df <- block_df_0_9_red %>%
+  mutate(time_of_day = hms::as_hms(timestamp)) %>%
+  group_by(LCLid, time_of_day) %>%
+  summarise(mean_energy = mean(energy_consumption, na.rm = TRUE), .groups = "drop")
+
+# Overall mean across all households, for the highlighted line
+mean_profile <- profile_df %>%
+  group_by(time_of_day) %>%
+  summarise(mean_energy_all = mean(mean_energy, na.rm = TRUE), .groups = "drop")
+
+ggplot() +
+  geom_path(data = profile_df, 
+            aes(x = time_of_day, y = mean_energy, group = LCLid),
+            color = "steelblue", alpha = 0.2, linewidth = 0.1) +
+  geom_path(data = mean_profile,
+            aes(x = time_of_day, y = mean_energy_all),
+            color = "firebrick", linewidth = 1) +
+  scale_x_time(breaks = scales::breaks_width("2 hours"), labels = scales::label_time("%H:%M")) +
+  labs(x = "", y = "Mean Energy Consumption (kWh)",
+       title = "Household Energy Consumption Profiles in UK",
+       subtitle = "Households in block 1 to 9")
+```
+
+
+```{r}
+top_9_hhs <- block_df_0_9_red %>%
+  group_by(LCLid) %>% 
+  summarise(dates_recorded = n_distinct(date(timestamp)),
+            tot_energy = sum(energy_consumption,na.rm = TRUE),.groups = "drop") %>% 
+  mutate(avg_energy = tot_energy/dates_recorded) %>% 
+  arrange(desc(avg_energy))%>%
+  slice_head(n=9)
+```
+
+
+```{r}
+mean(top_9_hhs$avg_energy)
+```
+
+
+```{r}
+filtered_df <- block_df_0_9_red %>% 
+  filter(LCLid %in% top_9_hhs$LCLid)
+
+point_text_df <- filtered_df %>% 
+  group_by(LCLid,date(timestamp)) %>% 
+  summarise(tot_energy = sum(energy_consumption,na.rm = TRUE),.groups = "drop") %>%
+  rename(Date = `date(timestamp)`) %>% 
+  slice_max(Date)
+
+p1 <- filtered_df %>% 
+  group_by(LCLid,date(timestamp)) %>% 
+  summarise(total_energy_consumption = sum(energy_consumption,na.rm = TRUE),
+            .groups = "drop") %>% 
+  rename(Date = `date(timestamp)`) %>% 
+  mutate(Date=as.Date(Date)) %>% 
+  ggplot() +
+  geom_hline(yintercept = 60,linetype="solid", size=.25) +
+  geom_point(data=point_text_df,
+             aes(x=Date, y=tot_energy, color=LCLid),shape=16) +
+  geom_line(aes(x=Date, y=total_energy_consumption, color=LCLid)) +
+  gghighlight(use_direct_label = FALSE,
+              unhighlighted_params = list(colour = alpha("grey85", 1))) +
+  geom_text(data=point_text_df,
+             aes(x=Date, y=tot_energy, color=LCLid, label = round(tot_energy)),
+             hjust = -.5, vjust = .5, size=2.5, family=font, fontface="bold") +
+  scale_color_met_d(name="Redon") +
+  scale_x_date(date_breaks = "1 year",date_labels = "%Y") +
+  scale_y_continuous(breaks = c(0,30,60,90,120,150,180,210,240),
+                     labels = c("","","60","","","","","","")
+                     ) +
+  facet_wrap(~  factor(LCLid, levels=c(top_9_hhs$LCLid))) +
+  coord_cartesian(clip = "off") +
+  theme(
+    axis.title = element_blank(),
+    axis.text = element_text(color=txt_col, size=7),
+    strip.text.x = element_text(face="bold"),
+    plot.title = element_markdown(hjust=0,size=20, color=txt_col,lineheight=0, face="bold", margin=margin(20,0,5,0)),
+    plot.subtitle = element_markdown(hjust=0,size=16, color=txt_col,lineheight = 0, margin=margin(0,0,30,0)),
+    plot.caption = element_markdown(hjust=.5, margin=margin(60,0,0,0), size=8, color=txt_col, lineheight = 1.2),
+    plot.caption.position = "plot",
+    plot.background = element_rect(color=bg, fill=bg),
+    plot.margin = margin(10,10,10,10),
+    legend.position = "none",
+    legend.title = element_text(face="bold")
+  ) +
+  labs(
+    title = "Energy Consumption in Top **9** Households in UK",
+    subtitle = "Average Energy Consumption for 2011-2014: **63.11**"
+  )
+
+p1
+```
+
+
+```{r}
+block_df_0_9_red <- block_df_0_9_red %>%
+  as_tsibble(key=LCLid,index = timestamp)
+```
+
+
+```{r message=FALSE,warning=FALSE}
+require(TSstudio)
+
+block_df_0_9_wider <- block_df_0_9_red%>%
+  pivot_wider(id_cols = timestamp,names_from = LCLid,values_from=energy_consumption)
+```
+
+
+```{r}
+block_df_0_9_day <- block_df_0_9_wider %>%
+  fill_gaps() %>%
+  index_by(day = ~ as_date(.)) %>%
+  summarise(across(where(is.numeric),~mean(.x, na.rm = TRUE)))
+
+ts_plot(block_df_0_9_day[,0:6],
+        line.mode = "lines+markers",
+        type = "multiple")
+```
+

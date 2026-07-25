@@ -25,6 +25,10 @@ files <- list.files("../archive/hhblock_parquet", pattern = "*.parquet$",
 block_df <- open_dataset(files[1]) %>% collect()
 ```
 
+```{r}
+head(block_df,5)
+```
+
 
 ```{r}
 compact_to_expanded <- function(df,
@@ -92,7 +96,7 @@ gc()
 exp_block_df <- compact_to_expanded(block_7_df, timeseries_col = 'energy_consumption', static_cols = c("frequency", "series_length", "stdorToU", "Acorn", "Acorn_grouped", "file"), time_varying_cols = c('holidays', 'visibility', 'windBearing', 'temperature', 'dewPoint', 'pressure', 'apparentTemperature', 'windSpeed', 'precipType', 'icon', 'humidity', 'summary'),ts_identifier = "LCLid")
 ```
 ```{r}
-head(block_7_df,5)
+head(exp_block_df,5)
 ```
 
 
@@ -601,5 +605,34 @@ ggplot(plot_df, aes(x = timestamp)) +
     panel.grid.major = element_line(colour = "grey70")
     
   )
+```
+```{r}
+mae_d <- c(
+  prev_day_imputed = mae_lastday,
+  hourly_profile_imputed = mae_hourly,
+  day_hourly_profile_imputed = mae_wk_hour,
+  seas_interp_weekday_half_hour_imputed = mae_weekday_half_hour,
+  seas_interp_half_hour_imputed = mae_half_hour
+)
+
+res_df <- data.frame(
+  Imputation = names(mae_d),
+  MAE = unname(mae_d),
+  stringsAsFactors = FALSE
+)
+
+res_df <- res_df %>%
+  mutate(
+    Imputation = recode(
+      Imputation,
+      prev_day_imputed = "Previous Day",
+      hourly_profile_imputed = "Hourly Profile",
+      day_hourly_profile_imputed = "Day-Hourly Profile",
+      seas_interp_weekday_half_hour_imputed = "Seasonal Interpolation Weekday-Half Hourly",
+      seas_interp_half_hour_imputed = "Seasonal Interpolation Half Hourly"
+    )
+  )
+
+res_df
 ```
 
