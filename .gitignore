@@ -2,10 +2,15 @@
 .Rhistory
 .RData
 .Ruserdata
+.quarto
 *.WEBP
 *.PNG
 *.html
+!Ch3_2Visualising_timeseries.html
 *.log
+_extensions/
+Ch3_2Visualising_timeseries_files/
+BoxCox/
 App_1_Prompt_Extraction.Rmd
 Emissions_data.R
 TS_Demo.R

@@ -1,0 +1,32 @@
+/* Custom Shinylive Iframe Styling */
+.shiny-app-wrapper,
+div.shinylive-wrapper {
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  background: transparent !important;
+}
+/* Target the embedded iframe and remove default iframe margins */
+.shiny-app-wrapper iframe,
+div.shinylive-wrapper iframe {
+  display: block !important;       /* Removes extra bottom line-height gap */
+  margin: 0px auto !important;    /* Clears outer spacing, keeps horizontally centered */
+  padding: 0 !important;
+  width: 100% !important;
+  
+  /* Retain your shadow and border styling */
+  border: 2px solid gray !important;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06) !important;
+  border-radius: 4px !important;
+}
+
+/*iframe {
+  border: 2px solid gray !important;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06) !important;
+  border-radius: 2px !important;
+} */
+
+/* Global plot alignment fallback */
+.cell-output-display {
+  text-align: center;
+}

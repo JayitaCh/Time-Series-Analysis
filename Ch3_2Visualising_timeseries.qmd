@@ -1,0 +1,723 @@
+---
+title: "Visualising Seasonality"
+author: "Jayita Chakraborty (PhD)"
+format: 
+  html:
+    toc: true
+    code-background: true
+    highlight-style: github
+    resources:
+      - shinylive-sw.js
+    css: styles.css
+code-line-numbers: true
+engine: knitr
+execute:
+  echo: false
+  fig-align: center
+filters:
+  - shinylive
+knitr:
+  opts_chunk: 
+    warning: false
+    message: false
+---
+
+## 1. Seasonal Plots
+
+Seasonal plots are a graphical tool to visualize and detect seasonality in a time series.
+Based on a selected periodicity it emphasizes the seasonal patterns and also shows the changes in seasonality over time.
+Especially, it allows to detect changes between different seasons.
+A seasonal pattern exists in a time series whenever we can tie a repeated event in the series to a specific **frequency unit**, for example, the average temperature in New York during the month of January, or the average number of passengers in the London underground between 8 a.m.
+and 9 a.m.
+Most of the seasonal patterns in nature are related to two astrophysical phenomena:
+
+-   The orbit of Earth around the Sun (also known as the orbital period of Earth), which is defined as 365 days.
+
+-   The rotation of Earth (or solar day) with a length of 86,400 seconds or 24 hours.
+
+When seasonality exists in the time series data, we can classify this into one of the following categories:
+
+-   **Single seasonal pattern:** Whenever there is only one dominant seasonal pattern in the series.
+
+-   **Multiple seasonal patterns:** If more than one dominant seasonal pattern exists in the series.
+
+Typically, multiple seasonal patterns are more likely to occur whenever the series has a high frequency (for example, daily, hourly, half-hourly, and so on), as there are more options to aggregate the series to a lower frequency.
+For example, if we capture a time-series in a daily interval, the series frequency can be set as follows:
+
+-   Daily (or 365), assuming the most appropriate cycle is a full year
+
+-   Weekdays (or 7) whenever the weekday oscillation is more dominant than the one of the full-year cycle
+
+When using a descriptive statistics process with this type of series, it will make sense to apply this method for each potential frequency of the series (or at least the main ones) in order to examine whether there is an indication for the seasonal pattern.
+For example, `UK energy consumption` data is an half-hourly time series, which marks it automatically as a *suspect* of having multiple seasonal patterns.
+Potentially, such time series could have three different seasonal patterns:
+
+-   **Hourly:** There may be a direct relationship between the energy consumption and the hour of the day.
+
+-   **Weekday:** It would make sense to expect a variation in energy consumption between the working days and the consumption throughout the weekend.
+
+-   **Monthly:** As weather patterns vary throughout the year, the amount of daylight and other seasonal factors could impact the energy consumption.
+
+```{r}
+#| echo: false
+pacman::p_load(tidyverse,readr,tsibble,imputeTS,fpp3,fs,arrow,viridis,xts,TSstudio,mosaic,cowplot,patchwork)
+```
+
+For the ease of the analysis, we are going to filter the [UK energy consumption](https://data.london.gov.uk/dataset/smartmeter-energy-consumption-data-in-london-households-vqm0d) data to include the household blocks in `file 7`.
+
+```{r}
+#| echo: false
+
+files <- list.files("../archive/hhblock_parquet", pattern = "file.*.parquet$",full.names = TRUE)
+
+block_df_7 <- open_dataset(files) %>% collect()
+```
+
+We can also use the `inspect` method from the `{mosaic}` package to explore the information on the variables in the dataset.
+We will only keep the `energy_consumption` and `temperature` for convenience.
+
+```{r}
+#| echo: true
+block_df_7 <- block_df_7 %>%
+  zoo::na.locf()
+
+inspect(block_df_7)
+tally(~stdorToU,block_df_7)
+```
+
+```{r}
+#| echo: false
+#| output: false
+block_df_7_red <- block_df_7 %>%
+  select(timestamp,LCLid,stdorToU,energy_consumption,temperature)
+rm(block_df_7)
+gc()
+```
+
+```{r}
+block_df_tsbl <- block_df_7_red %>%
+  as_tsibble(index = timestamp,key = LCLid)
+
+HHs_std <- levels(factor(block_df_tsbl[block_df_tsbl$stdorToU=="Std",]$LCLid))
+
+HHs_tou <- levels(factor(block_df_tsbl[block_df_tsbl$stdorToU=="ToU",]$LCLid))
+
+block_df_wide <- block_df_tsbl %>% 
+  pivot_wider(id_cols = timestamp,names_from = LCLid,values_from=energy_consumption) %>% 
+  fill_gaps()
+```
+
+We will use the `ts_plot` function from the **TSstudio** package.
+`ts_plot` function is used to produce interactive visualization for time series objects.
+This will produce the raw data on energy consumption.
+Now, instead of visualising the raw data for all the households, it will be better to visualise the raw data for a single household.
+
+```{r, fig.width=10, fig.height=6}
+#| echo: true
+#| fig-align: center
+ts_plot(block_df_wide[,c(1,4)],
+        title = "ts_plot: Energy Consumption<br>for MAC000073",
+        Xtitle = "Time",
+        Ytitle = "Energy Consumption",
+        line.mode =  "lines+markers")
+```
+
+```{r, warning=FALSE,fig.width=10, fig.height=6}
+#| echo: true
+#| fig-align: center
+block_df_wide <- block_df_wide %>% 
+  mutate(conn_std = rowMeans(across(HHs_std),na.rm = TRUE),
+         conn_tou = rowMeans(across(HHs_tou),na.rm = TRUE))
+
+# Plotting the new variables
+ts_plot(block_df_wide[,c("timestamp","conn_std","conn_tou")],
+        title = "ts_plot: Energy Consumption<br>for different connections",
+        Xtitle = "Time",
+        Ytitle = "Energy Consumption",
+        line.mode =  "lines+markers")
+```
+
+```{r, fig.width=10, fig.height=6}
+#| echo: true
+#| fig-align: center
+
+block_df_conn <- xts(block_df_wide[, c("conn_std","conn_tou"),drop=FALSE],order.by = block_df_wide$timestamp)
+
+hourly_energy <- period.apply(block_df_conn,                              endpoints(block_df_conn, on = "hours", k = 1), function(x) colSums(x, na.rm = TRUE))
+index(hourly_energy) <- floor_date(index(hourly_energy), "hour")
+
+ts_plot(hourly_energy,
+        title = "ts_plot: Hourly Energy Consumption:<br> Std Vs. ToU",
+        Xtitle = "Time",
+        Ytitle = "Energy Consumption",
+        line.mode =  "lines+markers")
+```
+
+Now, it is difficult to make any sense out of such plot, unless we look at the hourly variations across the years.
+Let's convert the `xts` object into a `data.frame` and then try to plot the **average hourly variation** in energy consumption for *MAC000073*.
+Specialised packages will not able to produce the visualisation of such aggregation.
+You will need to depend on `{ggplot}`.
+
+```{r, fig.width=8, fig.height=10}
+hourly_df <- data.frame(
+  timestamp = index(hourly_energy),
+  conn_std = hourly_energy$conn_std,
+  conn_tou = hourly_energy$conn_tou
+)
+
+df_summary <- hourly_df %>%
+  mutate(
+    hour = hour(timestamp),
+    year = year(timestamp),
+    conn_std = na_if(conn_std, 0),
+    conn_tou = na_if(conn_tou,0)
+  )
+
+hourly_df_summary <- df_summary %>%
+  group_by(hour) %>%
+  summarise(
+    std_mean_hr = mean(conn_std,na.rm = TRUE),
+    std_count = sum(!is.na(conn_std)),
+    tou_mean_hr = mean(conn_tou,na.rm=TRUE),
+    tou_count = sum(!is.na(conn_tou))
+  )
+
+hr_yearly_df_summary <- df_summary %>% 
+  group_by(year,hour) %>% 
+  summarise(
+    std_mean = mean(conn_std,na.rm = TRUE),
+    std_count = sum(!is.na(conn_std)),
+    tou_mean = mean(conn_tou,na.rm=TRUE),
+    tou_count = sum(!is.na(conn_tou))
+  )
+
+plot_hourly_df <- hourly_df_summary %>% 
+  select(-c(std_count,tou_count)) %>% 
+  pivot_longer(cols = c("std_mean_hr","tou_mean_hr"),names_to= "connection",values_to = "energy_mean_hr")
+
+plot_hr_yearly_df <- hr_yearly_df_summary%>% 
+  select(-c(std_count,tou_count)) %>% 
+  pivot_longer(cols = c("std_mean","tou_mean"),names_to= "connection",values_to = "energy_mean")
+```
+
+```{r, fig.width=8, fig.height=10}
+#| echo: true
+#| fig-align: center
+p1 <- ggplot(plot_hourly_df,
+       aes(x = hour,
+           y = energy_mean_hr,colour=connection)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    title = "Average Hourly Energy Consumption:\nStd Vs. ToU ",
+    x = "Hour of Day",
+    y = "Mean Energy Consumption",
+    colour=""
+  ) +
+  scale_x_continuous(
+    breaks = seq(0, 23, by = 2)
+  ) +
+  theme_minimal()+
+  theme(
+    legend.position = "top"
+  )
+
+p2 <- ggplot(plot_hr_yearly_df,
+       aes(x = hour,
+           y = energy_mean,colour = factor(connection))) +
+  geom_line() +
+  geom_point() +
+  facet_wrap(~year,nrow = 2)+
+  labs(
+    title = "Average Hourly Energy Consumption from 2011-2014:\nStd Vs. ToU",
+    x = "Hour of Day",
+    y = "Mean Energy Consumption",
+    colour=""
+  ) +
+  scale_x_continuous(
+    breaks = seq(0, 23, by = 2)
+  ) +
+  scale_color_discrete() +
+  theme_minimal() +
+  theme(
+    legend.position = "top"
+  )
+
+cowplot::plot_grid(p1,p2,nrow = 2)
+```
+
+```{r}
+# calculate consumption value per month
+# pay attention, the data consists of hourly values, the daily consumption would be the summation of all hourly values
+# so the average consumption for a single month will be total consumption across all days/total number of days!
+df_summary <- df_summary %>% 
+  mutate(month=month(timestamp),
+         day = day(timestamp))
+
+monthly_df_summary <- df_summary %>%
+  group_by(year,month) %>% 
+  summarise(date_counts = n_distinct(date(timestamp)),
+            energy_std_tot = sum(conn_std,na.rm = TRUE),
+            energy_std_mean = energy_std_tot/date_counts,
+            energy_tou_tot = sum(conn_tou,na.rm = TRUE),
+            energy_tou_mean = energy_tou_tot/date_counts,.groups = "drop") %>%   
+  mutate(date = as.Date(paste(year, month, "01", sep = "-"))
+        )
+```
+
+The `ts_seasonal` function provides several types of seasonal plots.
+The type argument sets the type of the plot.
+The default option is `normal`.
+This function creates a seasonal plot of the series by splitting and plotting each year as a separate line.
+This allows the user to obtain changes in the series from year to year.
+The `cycle` option group plots the series frequency units over time in chronological order.
+This allows us to identify the seasonal pattern without detrending the series.
+The `box` plot can be very informative plot, as it provides the range and quartile representation of the observations of each frequency unit.
+On the other hand, some of the oscillation in the box plot representation may occur as results of the series trend.
+Therefore, it is always recommended that you use a combination of different views of the series seasonality to get the full picture.
+The `all` option returns a plot of all of the three plots (normal, cycle, and box).
+Let's try it out!
+
+```{r}
+#| echo: true
+#| fig-align: center
+numYears <- length(unique(monthly_df_summary$year))
+month_xts <- xts(monthly_df_summary[,c("energy_std_mean","energy_tou_mean")], order.by = monthly_df_summary$date)
+
+ts_seasonal(month_xts$energy_std_mean,
+            type = "all",
+            title = "Seasonal Plot per Month over 3 years")
+```
+
+We will look at the `ts_quantile` function for visualizing the quantile plot of time series data.This function supports time series objects with a time or date index (such as the xts, zoo, and data.frame objects), and it's mainly useful on high-frequency time series data, such as hourly or daily.
+By default, the function returns a quantile plot of the series frequency units, where the middle line represents the median and the lower and upper lines represent the 25th and 75th percentiles.
+For instance, we will use this function to visualise the 24 cycles (half-hourly observations combined to hourly consumption) of the UK energy consumption dataset.
+This will give us a plot similar to our previous plot of **Hourly Average of Energy Consumption**.
+
+```{r, fig.width=8, fig.height=5}
+#| echo: true
+#| fig-align: center
+plot1<- ts_quantile(hourly_energy$conn_tou,Ytitle = "Energy:<br>Dynamic Tariff")
+plot2<- ts_quantile(hourly_energy$conn_std,Ytitle = "Energy:<br>Static Tariff")
+
+plotly::subplot(list(plot1,plot2),nrows = 2,shareX = TRUE,titleY = TRUE)%>%
+  plotly::layout(title = "Quantile Plots: conn_tou vs conn_std")
+```
+
+```{r, fig.width=8, fig.height=5}
+#| echo: true
+#| fig-align: center 
+index(hourly_energy) <- with_tz(index(hourly_energy), "Europe/London")
+ts_quantile(hourly_energy$conn_std, period = "weekdays", n = 3,             title = "Energy Consumption pattern <br>for Static Tariff - by Weekdays")
+```
+
+```{r, fig.width=8, fig.height=5}
+#| echo: true
+#| fig-align: center
+ts_quantile(hourly_energy$conn_std, period = "monthly", n = 4,title = "Energy Consumption pattern <br>for Static Tariff - by Weekdays")
+```
+
+Another approach for analyzing seasonal patterns in time series data is by plotting the distribution of the frequency units by using histogram or density plots. This will allow us to examine whether each frequency unit has a unique distribution that can distinguish it from the rest of the units. In the following examples, we will use the `{ggplot2}` package to plot the density plot of each frequency unit using the `geom_density`. This method uses the kernel density estimation method to smooth the histogram plot.
+
+```{r,warning=FALSE}
+#| echo: true
+#| fig-align: center
+df_summary_long <- df_summary %>% 
+  pivot_longer(cols = c("conn_std","conn_tou"),names_to = "tariff",values_to = "energy") %>%
+  mutate(month_nm = month(timestamp,label = TRUE,abbr = TRUE))
+
+ggplot(df_summary_long, aes(x = energy)) +
+ geom_density(aes(fill = tariff),alpha = 0.5) +
+ ggtitle("Energy Consumption - Kernel Density Estimates by Month") +
+ facet_wrap(~ factor(month_nm),nrow=2)+
+  labs(fill="")+
+  theme(
+    legend.position = "bottom"
+  )
+```
+
+```{r,warning=FALSE, fig.width=8, fig.height=10}
+#| echo: true
+#| fig-align: center
+ggplot(df_summary_long, aes(x = energy)) +
+   geom_density(aes(fill = tariff)) +
+   ggtitle("Energy Consumption - Kernel Density Estimates by Hour of the day") +
+   facet_wrap(~as.factor(hour),nrow = 6)+
+  labs(fill="")+
+  scale_x_continuous(limits = c(0,1.5))+
+  theme(
+    legend.position = "bottom"
+  )
+```
+
+```{r,warning=FALSE, fig.width=8, fig.height=10}
+#| echo: true
+#| fig-align: center
+df_summary_long <- df_summary_long %>%
+  mutate(weekday = wday(timestamp,label = TRUE,abbr = TRUE))
+
+ggplot(df_summary_long%>%filter(hour==10),aes(x = energy,fill=tariff)) +
+ geom_density() +
+ ggtitle("Energy Consumption - Kernel Density Estimates at 10AM") +
+  labs(
+    fill=""
+  )+
+ facet_grid(rows=vars(factor(weekday)))+
+  scale_x_continuous(limits = c(0,3),breaks = scales::pretty_breaks(n=5))+
+  scale_y_continuous(limits = c(0,3),breaks = scales::pretty_breaks(n=2))+
+  theme(
+    legend.position = "bottom"
+  )
+```
+`gg_season()` is another useful tool in distinguishing between seasonal and cyclic patterns. It is similar to time plot in which the data are plotted against the individual “seasons” in which the data were observed. This allows the underlying seasonal pattern to be seen more clearly, and is especially useful in identifying years in which the pattern changes. Where the data has more than one seasonal pattern, the `period` argument can be used to select which seasonal plot is required. We can plot the daily pattern, weekly pattern or yearly pattern as follows.
+
+**Daily Pattern**
+```{r,warning=FALSE}
+#| echo: true
+#| fig-align: center
+df_summary_long %>%
+  filter(tariff=="conn_std") %>% 
+  as_tsibble(index=timestamp) %>% 
+  gg_season(energy, period = "day",max_col = 1,color="steelblue",alpha = 0.2)+
+  geom_line(data = hourly_df_summary%>%
+                    mutate(hour=as.POSIXct(hour*3600,
+                                   origin = "1973-01-01",tz="UTC")),
+            aes(x=hour,y=std_mean_hr),inherit.aes = FALSE,
+            colour="firebrick",
+            linewidth = 1.2)+
+  theme(legend.position = "top") +
+  labs(y="kWh", title="Energy Consumption: Standard Tariff")
+```
+
+```{r}
+df_summary <-df_summary%>%
+  mutate(weekday=wday(timestamp,label = TRUE,abbr = TRUE))
+
+wk_hr_df_summary<- df_summary %>% 
+  group_by(weekday,hour) %>% 
+  summarise(std_week_mean = mean(conn_std,na.rm=TRUE),
+            tou_week_mean = mean(conn_tou,na.rm=TRUE),
+            .groups = "drop") %>% 
+  mutate(hour_of_week = row_number())
+```
+**Weekly Pattern**
+```{r,warning=FALSE}
+#| echo: true
+#| fig-align: center
+
+df_summary_long %>%
+  filter(tariff=="conn_std") %>% 
+  as_tsibble(index=timestamp) %>% 
+  gg_season(energy, period = "week",max_col = 1,color="darkgreen",alpha = 0.1)+
+  geom_line(data = wk_hr_df_summary%>%
+                    mutate(hour_of_week=as.POSIXct(hour_of_week*3600,
+                                   origin = "1973-01-01",tz="UTC")),
+            aes(x=hour_of_week,y=std_week_mean),inherit.aes = FALSE,
+            colour="brown2",
+            linewidth = 1.2)+
+  theme(legend.position = "none") +
+  labs(y="kWh", title="Energy Consumption: Standard Tariff")
+```
+**Yearly Pattern**
+```{r,warning=FALSE, fig.width=8, fig.height=6}
+#| echo: true
+#| fig-align: center
+df_summary<- df_summary%>%
+  mutate(hour_elapsed = (yday(timestamp)-1)*24+hour)
+
+year_day_df_summary <- df_summary_long %>% 
+  rename(Year = year) %>% 
+  mutate(
+    dummy_date = make_date(year = 2001, month = month, day = day),
+    day_of_year_fixed = yday(dummy_date),
+    hours_elapsed = day_of_year_fixed*24) %>% 
+  group_by(month,day,hours_elapsed) %>% 
+  summarise(tot_std_energy = sum(energy[tariff=="conn_std"],
+                                 na.rm=TRUE),
+            n_years_std = n_distinct(Year[tariff=="conn_std"]),
+            mean_std_energy = mean(energy[tariff=="conn_std"],
+                                 na.rm=TRUE),
+            tot_tou_energy = sum(energy[tariff=="conn_tou"],
+                                 na.rm=TRUE),
+            n_years_tou = n_distinct(Year[tariff=="conn_tou"]),
+            mean_std_energy = mean(energy[tariff=="conn_std"],
+                                 na.rm=TRUE),
+            .groups = "drop")
+
+df_summary_long %>%
+  filter(tariff=="conn_std") %>% 
+  as_tsibble(index=timestamp) %>% 
+  gg_season(energy, period = "year",max_col = 4,linewidth=0.001,
+            alpha=0.8) +
+  geom_line(data = year_day_df_summary%>%
+                    mutate(hours_elapsed=
+                             as.POSIXct(hours_elapsed*3600,
+                          origin = "1973-01-01",tz="UTC")),
+            aes(x=hours_elapsed,y=mean_std_energy),
+            inherit.aes = FALSE,
+            colour="black",
+            linewidth = 1.3)+
+  guides(color = guide_legend(override.aes = list(linewidth = 2))) +
+  labs(y="kWh", title="Energy Consumption: Standard Tariff")+
+  theme(legend.position = "bottom",
+        legend.key = element_blank())
+```
+
+```{r}
+year_qtr_df <- df_summary_long %>% 
+  as_tsibble(key=tariff,index=timestamp) %>% 
+  group_by_key() %>% 
+  index_by(year_quarter = yearquarter(timestamp)) %>% 
+  summarise(
+    total_kwh = sum(energy, na.rm = TRUE),
+    mean_hourly_kwh = mean(energy, na.rm = TRUE),
+    sd_hourly_kwh = sd(energy, na.rm = TRUE),
+    n_hours = n(),
+    n_days = n_distinct(date(timestamp)),
+    .groups = "drop"
+  )
+```
+
+We can further look at the seasonal patterns where the data for each season are collected together in separate mini time plots.
+We will use the `ggsubseriesplot` function to produce the mini time plots.
+
+```{r,warning=FALSE,message=FALSE}
+#| echo: true
+#| fig-align: center
+month_ts <- xts_to_ts(month_xts)
+forecast::ggsubseriesplot(month_ts)+
+  ylab("Average Daily Energy Consumption per Month \n(kWh/day)\n") +
+  ggtitle("Seasonal Miniplots over 3 years\n")
+```
+
+The horizontal lines indicate the means for each month.
+This form of plot enables the underlying seasonal pattern to be seen clearly, and also shows the changes in seasonality over time.
+It is especially useful in identifying changes within particular seasons.
+In this example, the plot is not particularly revealing; but in some cases, this is the most useful way of viewing seasonal changes over time.
+
+## 2. Calendar Heatmaps
+
+We discussed about calendar heatmaps in our last class.
+Heatmaps can be used to further investigate the temporal patterns.
+A time series heatmap is a three-dimensional plot, where the y-axis and x-axis represent the frequency units and frequency cycle respectively, and the color represents the magnitude of the observation value.
+We can generate such visualisations as per our requirement.
+
+```{r, fig.width=8, fig.height=6}
+#| echo: true
+#| fig-align: center
+source("../Extra_code/plot_utils.R")
+
+plot_1 <- plot_heatmap_median_weeks(hourly_df, 
+                                    value_col = "conn_std",
+                                    locTimeZone = "Europe/London")+
+  theme_minimal()+
+  theme(axis.text.x= element_blank(),
+        axis.ticks.x = element_blank(),
+        legend.position = "none")
+
+plot_2 <- plot_heatmap_median_weeks(hourly_df, 
+                                    value_col = "conn_tou",
+                                    locTimeZone = "Europe/London")+
+  theme_minimal()+
+  theme(legend.position = "none")
+
+(plot_1/ plot_spacer()/plot_2)+
+  plot_layout(heights = c(4,-1.05, 4),guides = "collect")+
+  plot_annotation(title = "Median per hour by Weekday and Season",
+                  subtitle = "Heatmap: Standard Tariff Vs. Dynamic Tariff")+
+  theme(legend.position = "right")
+```
+
+## 3. Time Series Decomposition
+
+Previously, we discussed three types of time series patterns: *trend*, *seasonality* and *cycles*.
+When we decompose a time series into components, we usually combine the trend and cycle into a single **trend-cycle** component (often just called the **trend** for simplicity).
+Thus we can think of a time series as comprising three components: a **trend-cycle component**, a **seasonal component**, and a **remainder component** (or **residuals** containing anything else in the time series).
+For some time series (e.g., those that are observed at least daily), there can be more than one seasonal component, corresponding to the different seasonal periods.
+
+### 3.1 Transformations and Adjustments
+
+Adjusting the historical data can often lead to a simpler time series.
+Here, we deal with four kinds of adjustments: calendar adjustments, population adjustments, inflation adjustments and mathematical transformations.
+The purpose of these adjustments and transformations is to simplify the patterns in the historical data by removing known sources of variation, or by making the pattern more consistent across the whole data set.
+Simpler patterns are usually easier to model and lead to more accurate forecasts.
+
+(a) **Calendar Adjustments -** Some of the variation seen in seasonal data may be due to simple calendar effects. In such cases, it is usually much easier to remove the variation before doing any further analysis.
+
+Let's check out the [online retail dataset](https://archive.ics.uci.edu/dataset/352/online+retail) from the **UCI Repository**.
+It contains all the transactions occurring between *01/12/2010* and *09/12/2011* for a UK-based and registered non-store online retail.
+
+```{r}
+#| echo: FALSE
+online_retail_dataset <- read_csv("data/online-retail-dataset.csv")
+
+online_retail_dataset$Timestamp <- parse_date_time(online_retail_dataset$InvoiceDate,                                                   orders = c("dmY HM","mdY HM","Ymd HM"),                             quiet=TRUE)
+
+online_retail_summary <- online_retail_dataset %>% 
+  select(Timestamp,Quantity,UnitPrice) %>% 
+  mutate(Date = date(Timestamp),
+         Tot_price = Quantity*UnitPrice) %>% 
+  group_by(Date) %>% 
+  summarise(total_sales_vol = sum(Quantity[Quantity>0|Quantity==0],na.rm = TRUE),
+            total_sales_price = sum(Tot_price[Quantity>0|Quantity==0],na.rm = TRUE),
+            .groups = "drop")
+
+online_monthly <- online_retail_dataset %>% 
+  select(Timestamp,Quantity,UnitPrice) %>% 
+  mutate(Year = year(Timestamp),
+         Month = month(Timestamp,label = TRUE,abbr = TRUE),
+         Date = date(Timestamp),
+         Tot_price = Quantity*UnitPrice) %>% 
+  group_by(Month) %>% 
+  summarise(monthly_sales_vol = sum(Quantity[Quantity>0|Quantity==0],na.rm = TRUE),
+            distinct_days = n_distinct(Date),
+            distinct_year = n_distinct(Year),
+            montly_sales_price = sum(Tot_price[Quantity>0|Quantity==0],na.rm = TRUE),
+            avg_sales_vol = monthly_sales_vol/distinct_days,
+            monthly_sales_vol_2 = mean(Quantity,na.rm=TRUE),
+            .groups = "drop")
+```
+
+In this scenario, there will be variation between the months simply because of the different numbers of trading days in each month, in addition to the seasonal variation across the year.
+It is easy to remove this variation by computing **average sales per trading day** in each month, rather than **total sales** in the month.
+Then we effectively remove the calendar variation.
+
+```{r,warning=FALSE,message=FALSE}
+#| echo: true
+#| fig-align: center
+
+pl_1<- autoplot(online_monthly %>% as_tsibble(index = Month))+
+  geom_line(aes(group = 1),linewidth = 1.2)+
+  geom_point(size=2.5,color="brown2")+
+  labs(
+    x="",
+    y="Monthly Sales\n Volume"
+  )+
+  scale_y_continuous(labels = scales::label_number(big.mark = ","))+
+  theme(
+    axis.text.x = element_text(angle=90,hjust = 1,vjust = 0.4)
+  )
+
+pl_2 <- autoplot(online_retail_summary%>%as_tsibble(index = Date))+
+  geom_line(linewidth = 0.2)+
+  geom_point(size=0.5)+
+  labs(
+    x="",
+    y="Sales Volume"
+  )+
+  scale_y_continuous(labels = scales::label_number(big.mark = ","))+
+  theme(
+    axis.text.x = element_text(angle = 45,hjust = 1.0,vjust = 1.1) 
+  )
+
+pl_3 <- autoplot(online_monthly[,c("Month","avg_sales_vol")] %>% as_tsibble(index = Month)) +
+  geom_line(aes(group=1),linewidth = 1.2)+
+  geom_point(size=2.5,color="brown2")+
+  labs(
+    y="Average Daily\n Sales Volume"
+  )+
+  scale_y_continuous(labels = scales::label_number(big.mark = ","))
+
+(pl_1+pl_2)/plot_spacer()/pl_3+
+  plot_layout(heights = c(3,-0.9,3))
+```
+
+Normalizing to "per day" correctly strips out the artificial inflation from raw counts, but it **cannot and should not** remove a genuine underlying seasonal signal, because the seasonal signal lives in the daily rate itself, not just the total.
+
+So, the pattern persisting after normalizing, is actually the expected signature of real seasonality.
+The correction fixes distortion in *magnitude*, not in *shape*, when the shape reflects something true about customer behavior.
+
+(b) **Population Adjustments -** Any data that are affected by population changes can be adjusted to give per-capita data. That is, consider the data per person (or per thousand people, or per million people) rather than the total. For example, if you are studying the number of hospital beds in a particular region over time, the results are much easier to interpret if you remove the effects of population changes by considering the number of beds per thousand people.
+
+This can be seen in the `global_economy` dataset, where a common transformation of GDP is GDP per-capita.
+
+```{r,warning=FALSE,message=FALSE}
+#| echo: true
+#| fig-align: center
+tot_gdp<- global_economy %>% 
+  filter(Country == "United Kingdom") %>% 
+  autoplot(GDP) +
+  geom_line(linewidth = 1.2)+
+  geom_point(color="brown2",size=2.2)+
+  labs(title = "Total GDP",y="$US\n (in 10 Millions)")+
+  scale_y_continuous(labels = scales::label_number(scale = 1/1e7,big.mark = ","))
+
+gdp_p_cap <- global_economy %>% 
+  filter(Country == "United Kingdom") %>% 
+  autoplot(GDP/Population) +
+  geom_line(linewidth = 1.2)+
+  geom_point(color="brown2",size=2.2)+
+  labs(title = "GDP per capita",y="$US")+
+  scale_y_continuous(labels = scales::label_number(big.mark = ","))
+
+tot_gdp/gdp_p_cap+
+  plot_layout(guides = "collect")
+```
+
+(c) **Inflation Adjustments -** Data which are affected by the value of money are best adjusted before modelling.
+    For example, the average cost of a new house will have increased over the last few decades due to inflation.
+    For this reason, financial time series are usually adjusted so that all values are stated in currency values from a particular year.
+    To make these adjustments, a price index is used.
+    If $z_t$ denotes the price index of the indexed year, $y_t$ denotes the price index of the current year, $z_{INDEX}$ denotes the actual price at the indexed year, then the adjusted price will be given by,
+
+    $$
+    x_{INDEX} = z_{INDEX} * \frac{y_t}{z_t}
+    $$
+
+This allows us to compare the growth or decline of industries relative to a common price value.
+For example, looking at aggregate annual “newspaper and book” retail turnover from `aus_retail`, and adjusting the data for inflation using CPI from `global_economy` allows us to understand the changes over time.
+
+```{r, warning=FALSE,message=FALSE}
+retail_df <- aus_retail %>%
+  filter(Industry=="Newspaper and book retailing") %>% 
+  group_by(Industry) %>% 
+  index_by(Year = year(Month)) %>% 
+  summarise(Turnover = sum(Turnover,na.rm = TRUE))
+
+aus_economy <- global_economy %>% 
+  filter(Code=="AUS")
+
+retail_df %>% 
+  left_join(aus_economy,by = "Year") %>% 
+  mutate(Adjusted_Turnover = Turnover / CPI * 100) %>% 
+  pivot_longer(c(Turnover,Adjusted_Turnover),
+               values_to = "Turnover") %>% 
+  mutate(name = factor(name,
+                       levels = c("Turnover","Adjusted_Turnover"))) %>% 
+  autoplot(Turnover)+
+  facet_grid(name ~ ., scales = "free_y")+
+  labs(title = "Turnover: Australian print media industry",
+       y = "$AU")+
+  theme(legend.position = "none")
+```
+
+(d) **Mathematical Transformations** - If the data shows variation that increases or decreases with the level of the series, then a transformation can be useful. For example, a **logarithmic transformation** is often useful as they are interpretable: changes in a log value are relative (or percentage) changes on the original scale. Sometimes other transformations are also used (although they are not so interpretable). For example, square roots and cube roots can be used. These are called **power transformations**.
+
+    Another useful family of transformations, that includes both logarithms and power transformations, is the family of **Box-Cox transformations**, which depend on the parameter λ and are defined as follows:\
+    $$
+        w_t = \begin{cases}
+        log(y_t) & \text{if } \lambda=0;\\
+        (\text{sign}(y_t)|y_t|^\lambda-1)/\lambda & \text{otherwise}.
+        \end{cases}
+        $$
+
+    The logarithm in a Box-Cox transformation is always a natural logarithm (i.e., to base e).
+    So if λ=0, natural logarithms are used, but if λ≠0, a power transformation is used, followed by some simple scaling.
+
+    If λ=1, then $w_t=y_t−1$, so the transformed data is shifted downwards but there is no change in the shape of the time series. For all other values of λ, the time series will change shape.
+
+Use the `slider` below to see the effect of varying λ to transform Australian quarterly gas production. A good value of λ is one which makes the size of the seasonal variation about the same across the whole series, as that makes the forecasting model simpler.
+
+```{shinylive-r}
+#| standalone: true
+#| viewerHeight: 700
+#| classes:  shiny-app-wrapper
+
+## file: app.R
+{{< include ./BoxCox/app.R >}}
+```
+
+:::{.callout-tip icon="false"}
+## **Time to think...**
+Can you guess the suitable $\lambda$ value for the above series?
+:::
