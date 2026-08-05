@@ -1,0 +1,19 @@
+{
+  "name": "Python + Quarto",
+  "build": {
+    "dockerfile": "../Dockerfile"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "quarto.quarto",
+        "ms-toolsai.jupyter",
+        "GitHub.copilot"
+      ]
+    }
+  },
+  "postCreateCommand": "python -m ipykernel install --user --name=python3 && quarto check",
+  "remoteUser": "root"
+}
