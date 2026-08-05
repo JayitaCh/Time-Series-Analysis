@@ -1,0 +1,14 @@
+## Core libraries
+numpy>=2.0
+pandas>=2.2
+
+## Visualisation
+matplotlib>=3.9
+seaborn>=0.13
+cycler>=0.12
+
+## libraries for forecasting
+utilsforecast>=0.2.12
+coreforecast>=0.0.16
+fpppy>=0.0.15
+statsmodels>=0.14
