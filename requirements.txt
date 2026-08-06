@@ -10,5 +10,5 @@ cycler>=0.12
 ## libraries for forecasting
 utilsforecast>=0.2.12
 coreforecast>=0.0.16
-fpppy>=0.0.15
+fpppy
 statsmodels>=0.14
